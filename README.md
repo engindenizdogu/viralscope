@@ -1,7 +1,7 @@
 # trendy-tube
 Predictive exploration of YouTube channel & video performance.
 
-** TODOs**
+### To Do
 - [IN PROGRESS] Create a sample dataset
 - [IN PROGRESS] Create the preprocessing pipeline
    - One hot encoding
@@ -15,7 +15,7 @@ Predictive exploration of YouTube channel & video performance.
 - Agentic Architecture
 - Frontend
 
-## Data Assets (repo root / `RawData/`)
+### Data Assets (repo root / `RawData/`)
 | File | Status |
 |------|--------|
 | `_raw_df_channels.tsv.gz` | sampled |
@@ -29,7 +29,7 @@ Predictive exploration of YouTube channel & video performance.
 | `yt_metadata_en.jsonl.gz` | downloading |
 | `yt_metadata_helper.feather` | downloading |
 
-## Sampling Large Files
+### Sampling Large Files
 ```python
 import pandas as pd
 
@@ -47,7 +47,7 @@ df_sample = df.sample(n=SAMPLE_SIZE, random_state=42).reset_index(drop=True)
 df_sample.to_csv(f'SampleData/{FILE_NAME}_sample.csv', index=False)
 ```
 
-## Next Steps
+### Next Steps
 - Feature engineering & model training (RandomForest + others)
 - Pipeline: encoding, scaling, selection
 - Experiment tracking & evaluation
