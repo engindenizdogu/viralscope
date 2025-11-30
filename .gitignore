@@ -1,2 +1,5 @@
 # Do not include raw data
 RawData/
+
+# Do not include sample data
+SampleData/
