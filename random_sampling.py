@@ -7,99 +7,172 @@ import json
 import zstandard as zstd
 import logging
 
-# '../RawData/_raw_yt_metadata.jsonl.zst' has 85 million rows. Reduce the sample size for testing.
-RATIO = 0.01  # e.g., 0.1 means 10% sample
-PATH_TO_FOLDER = "../RawData"
-FILE_NAME = "_raw_yt_metadata.jsonl.zst"
-SRC_PATH = os.path.join(PATH_TO_FOLDER, FILE_NAME)
-OUTPUT_BASE = "../SampleData/raw_yt_metadata_random_sample"
-MAX_LINES = None  # e.g., set to an int to cap lines read in sampling pass
-LOG_EVERY = 1_000_000  # progress logging cadence
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+class RandomSampler:
+    """
+    Random sampling from compressed YouTube metadata using Bernoulli sampling.
+    
+    Performs two-pass sampling:
+    1. Count total rows in compressed file
+    2. Sample rows using Bernoulli sampling with early stopping
+    
+    Outputs a random sample CSV.gz file for stratified sampling.
+    """
+    
+    def __init__(self, ratio=0.01, max_lines=None, log_every=1_000_000, random_state=42):
+        """
+        Initialize RandomSampler.
+        
+        Args:
+            ratio: Sampling ratio (0.01 = 1%)
+            max_lines: Optional cap on lines to read
+            log_every: Progress logging frequency
+            random_state: Random seed for reproducibility
+        """
+        self.ratio = ratio
+        self.max_lines = max_lines
+        self.log_every = log_every
+        self.random_state = random_state
+        
+        # Set random seed
+        random.seed(random_state)
+        
+        # Configure logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s | %(levelname)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+    
+    def count_rows(self, source_path):
+        """
+        Count total rows in compressed JSONL file.
+        """
+        total_rows = 0
+        dctx = zstd.ZstdDecompressor()
+        logging.info("Counting total rows in source file")
+        
+        with open(source_path, 'rb') as f:
+            with dctx.stream_reader(f) as reader:
+                while True:
+                    chunk = reader.read(65536)
+                    if not chunk:
+                        break
+                    total_rows += chunk.count(b'\n')
+                    if total_rows % 1_000_000 == 0:
+                        print(f"Counted {total_rows:,} lines...")
+        
+        print(f"Total rows in source: {total_rows:,}")
+        logging.info(f"Counted total rows: {total_rows:,}")
+        return total_rows
+    
+    def sample_rows(self, source_path, target_samples):
+        """
+        Sample rows using Bernoulli sampling with early stopping.
+        """
+        selected = []
+        lines_read = 0
+        malformed_count = 0
+        
+        with open(source_path, 'rb') as fh:
+            dctx = zstd.ZstdDecompressor()
+            with dctx.stream_reader(fh) as reader:
+                text_stream = io.TextIOWrapper(reader, encoding='utf-8')
+                for line in text_stream:
+                    lines_read += 1
+                    
+                    # Optional MAX_LINES cap
+                    if self.max_lines is not None and lines_read >= self.max_lines:
+                        logging.warning(f"Reached MAX_LINES cap: {self.max_lines}. Stopping early.")
+                        break
+                    
+                    if random.random() < self.ratio:
+                        try:
+                            selected.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            malformed_count += 1
+                            continue
+                    
+                    # Progress logging
+                    if lines_read % self.log_every == 0:
+                        logging.info(
+                            f"Read {lines_read:,} lines | Collected {len(selected):,} samples | "
+                            f"Malformed {malformed_count}"
+                        )
+                    
+                    # Early stop if we have enough samples
+                    if len(selected) >= target_samples:
+                        logging.info(f"Collected target samples: {len(selected):,}. Stopping early.")
+                        break
+        
+        return selected, malformed_count
+    
+    def run_sampling(self, source_path, output_path):
+        """
+        Execute the full random sampling pipeline.
+        
+        Args:
+            source_path: Path to compressed JSONL source file
+            output_path: Path to save CSV.gz output
+            
+        Returns:
+            DataFrame of sampled rows
+        """
+        start_time = time.time()
+        
+        logging.info("="*70)
+        logging.info("RANDOM SAMPLING PIPELINE")
+        logging.info("="*70)
+        logging.info(f"Source file: {source_path}")
+        logging.info(f"Sampling ratio: {self.ratio}")
+        
+        # Count total rows
+        total_rows = self.count_rows(source_path)
+        
+        # Compute target samples
+        target_samples = max(1, int(total_rows * self.ratio))
+        logging.info(f"Target samples (approx): {target_samples:,}")
+        
+        # Sample rows
+        selected, malformed_count = self.sample_rows(source_path, target_samples)
+        
+        # Create DataFrame
+        sample_df = pd.DataFrame(selected)
+        
+        # Save results
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        sample_df.to_csv(output_path, index=False, compression='gzip')
+        
+        duration = time.time() - start_time
+        
+        # Print and log results
+        print(f"\nSampled rows (~{self.ratio*100:.1f}% target): {len(sample_df):,}")
+        print(f"Malformed lines skipped: {malformed_count}")
+        print(f"Saved: {output_path}")
+        print(f"Elapsed time: {duration:.2f} seconds")
+        
+        logging.info(f"Sampled rows: {len(sample_df):,}")
+        logging.info(f"Malformed lines skipped: {malformed_count}")
+        logging.info(f"Saved: {output_path}")
+        logging.info(f"Elapsed time: {duration:.2f} seconds")
+        
+        return sample_df
 
-start_time = time.time()
-logging.info("Starting random sampling")
-logging.info(f"Source file: {SRC_PATH}")
-logging.info(f"Sampling ratio: {RATIO}")
 
-# 1) Count total rows (first pass)
-total_rows = 0
-dctx = zstd.ZstdDecompressor()
-logging.info(f"Counting total rows in source file")
-with open(SRC_PATH, 'rb') as f:
-    with dctx.stream_reader(f) as reader:
-        buffer = b''
-        while True:
-            chunk = reader.read(65536)
-            if not chunk:
-                break
-            total_rows += chunk.count(b'\n')
-            if total_rows % 1000000 == 0:
-                print(f"Counted {total_rows:,} lines...")
-
-print(f"Total rows in source: {total_rows}")
-logging.info(f"Counted total rows: {total_rows}")
-
-# Compute target samples for an early stop
-target_samples = max(1, int(total_rows * RATIO))
-logging.info(f"Target samples (approx): {target_samples}")
-
-# 2) Sample rows in a second pass using Bernoulli sampling with stop condition
-selected = []
-lines_read = 0
-malformed_count = 0
-
-with open(SRC_PATH, 'rb') as fh:
-    dctx = zstd.ZstdDecompressor()
-    with dctx.stream_reader(fh) as reader:
-        text_stream = io.TextIOWrapper(reader, encoding='utf-8')
-        for line in text_stream:
-            lines_read += 1
-
-            # Optional MAX_LINES cap
-            if MAX_LINES is not None and lines_read >= MAX_LINES:
-                logging.warning(f"Reached MAX_LINES cap: {MAX_LINES}. Stopping early.")
-                break
-
-            if random.random() < RATIO:
-                try:
-                    selected.append(json.loads(line))
-                except json.JSONDecodeError:
-                    malformed_count += 1
-                    continue  # skip malformed lines
-
-            # Progress logging
-            if lines_read % LOG_EVERY == 0:
-                logging.info(f"Read {lines_read} lines | Collected {len(selected)} samples | Malformed {malformed_count}")
-
-            # Early stop if we have enough samples
-            if len(selected) >= target_samples:
-                logging.info(f"Collected target samples: {len(selected)}. Stopping early.")
-                break
-
-sample_df = pd.DataFrame(selected)
-
-# 3) Save results as CSV and GZIP
-gz_path  = f"{OUTPUT_BASE}.csv.gz"
-sample_df.to_csv(gz_path, index=False, compression='gzip')
-
-duration = time.time() - start_time
-
-# Prints
-print(f"Sampled rows (~{RATIO*100:.1f}% target): {len(sample_df)}")
-print(f"Malformed lines skipped: {malformed_count}")
-print(f"Saved: {gz_path}")
-print(f"Elapsed time: {duration:.2f} seconds")
-
-# Logs
-logging.info(f"Final samples collected: {len(sample_df)}")
-logging.info(f"Malformed lines skipped: {malformed_count}")
-logging.info(f"Saved GZIP: {gz_path}")
-logging.info(f"Elapsed time: {duration:.2f} seconds")
-logging.info("Random sampling completed")
+# ============================================================================
+# USAGE EXAMPLE
+# ============================================================================
+if __name__ == "__main__":
+    # Initialize sampler
+    sampler = RandomSampler(
+        ratio=0.01,
+        max_lines=None,
+        log_every=1_000_000,
+        random_state=42
+    )
+    
+    # Run sampling
+    sample_df = sampler.run_sampling(
+        source_path='RawData/_raw_yt_metadata.jsonl.zst',
+        output_path='SampleData/random_sample_raw_yt_metadata.csv.gz'
+    )
