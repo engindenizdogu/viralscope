@@ -1,8 +1,14 @@
-# LIBRARIES FOR DATA MANIPULATION
+# Core Data Manipulation
 pandas
+numpy
 
-# REQUIREMENTS FOR PREPROCESSING SCRIPTS
-gzip
-json
+# Data Compression & Serialization
 zstandard
 pyarrow
+
+# Machine Learning
+scikit-learn
+
+# Visualization
+matplotlib
+seaborn
