@@ -1,0 +1,8 @@
+# LIBRARIES FOR DATA MANIPULATION
+pandas
+
+# REQUIREMENTS FOR PREPROCESSING SCRIPTS
+gzip
+json
+zstandard
+pyarrow
