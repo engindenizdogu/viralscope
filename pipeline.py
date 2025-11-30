@@ -145,7 +145,7 @@ class TrendyTubePipeline:
             output_csv_path=self.config['stratified_sample_output'],
             output_plot_path=os.path.join(
                 self.config['plots_output_dir'], 
-                'target_distribution_stratified.png'
+                'target_dist_stratified.png'
             )
         )
         
@@ -319,4 +319,4 @@ if __name__ == "__main__":
 
     pipeline = TrendyTubePipeline(config=config)
     results = pipeline.run_full_pipeline()
-    print(results)
+    #print(results)
