@@ -51,7 +51,8 @@ class TrendyTubePipeline:
             # Data paths
             'raw_metadata_path': 'RawData/_raw_yt_metadata.jsonl.zst',
             'channels_path': 'RawData/_raw_df_channels.tsv.gz',
-            'comments_path': 'RawData/num_comments.tsv.gz',
+            'timeseries_path': 'RawData/_raw_df_timeseries.tsv.gz',
+
             
             # Output paths
             'random_sample_output': 'SampleData/random_sample_raw_yt_metadata.csv.gz',
@@ -141,7 +142,7 @@ class TrendyTubePipeline:
         stratified_df = sampler.run_sampling_pipeline(
             metadata_path=self.config['random_sample_output'],
             channels_path=self.config['channels_path'],
-            comments_count_path=self.config['comments_path'],
+            timeseries_path=self.config['timeseries_path'],
             output_csv_path=self.config['stratified_sample_output'],
             output_plot_path=os.path.join(
                 self.config['plots_output_dir'], 
@@ -165,15 +166,8 @@ class TrendyTubePipeline:
             features_df = pd.read_csv(self.config['engineered_features_output'], compression='gzip')
             print(f"Loaded {len(features_df):,} rows with engineered features")
             
-            # Prepare features and target
-            engineer = FeatureEngineer(random_state=self.config['random_state'])
-            X, y, feature_names = engineer.prepare_features_and_target(features_df)
-            
             self.results['features_df'] = features_df
-            self.results['X'] = X
-            self.results['y'] = y
-            self.results['feature_names'] = feature_names
-            return features_df, X, y, feature_names
+            return features_df
         
         # Load stratified sample
         stratified_df = self.results.get('stratified_sample')
@@ -185,18 +179,15 @@ class TrendyTubePipeline:
         
         # Run feature engineering pipeline
         print("Engineering features from video and channel metadata...")
-        features_df, X, y, feature_names = engineer.run_feature_engineering_pipeline(
+        features_df = engineer.run_feature_engineering_pipeline(
             input_path=self.config['stratified_sample_output'],
             output_path=self.config['engineered_features_output']
         )
         
         self.results['features_df'] = features_df
-        self.results['X'] = X
-        self.results['y'] = y
-        self.results['feature_names'] = feature_names
         
-        print(f"\n✓ Stage 3 completed: {len(feature_names)} features engineered")
-        return features_df, X, y, feature_names
+        print(f"\n✓ Stage 3 completed: {features_df.shape[1] - 1} features engineered")
+        return features_df
     
     def stage4_model_training(self):
         """
@@ -204,13 +195,26 @@ class TrendyTubePipeline:
         """
         self.print_stage_header("Model Training & Evaluation", 4)
         
-        # Get features and target
-        X = self.results.get('X')
-        y = self.results.get('y')
-        feature_names = self.results.get('feature_names')
+        # Get features dataframe
+        features_df = self.results.get('features_df')
         
-        if X is None or y is None:
-            raise ValueError("Features and target not found. Run feature engineering first.")
+        if features_df is None:
+            # Load from file if not in results
+            features_df = pd.read_csv(self.config['engineered_features_output'], compression='gzip')
+        
+        # Prepare features and target
+        print("Preparing features and target variable...")
+        y = features_df['is_successful']
+        X = features_df.drop(columns=['is_successful'])
+        feature_names = list(X.columns)
+        
+        # Handle missing and infinite values
+        import numpy as np
+        X = X.fillna(0)
+        X = X.replace([np.inf, -np.inf], 0)
+        
+        print(f"Feature matrix shape: {X.shape}")
+        print(f"Features used: {len(feature_names)} features")
         
         # Initialize model trainer
         trainer = ModelTrainer(
@@ -292,7 +296,7 @@ if __name__ == "__main__":
         # Data paths
         'raw_metadata_path': 'RawData/_raw_yt_metadata.jsonl.zst',
         'channels_path': 'RawData/_raw_df_channels.tsv.gz',
-        'comments_path': 'RawData/num_comments.tsv.gz',
+        'timeseries_path': 'RawData/_raw_df_timeseries.tsv.gz',
             
         # Output paths
         'random_sample_output': 'SampleData/random_sample_raw_yt_metadata.csv.gz',
@@ -312,7 +316,7 @@ if __name__ == "__main__":
         'random_state': 42,
             
         # Pipeline control
-        'skip_random_sampling': False,  # Set True if random sample exists
+        'skip_random_sampling': True,  # Set True if random sample exists
         'skip_stratified_sampling': False,  # Set True if stratified sample exists
         'skip_feature_engineering': False,  # Set True if features exist
     }

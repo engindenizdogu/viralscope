@@ -371,10 +371,10 @@ results = pipeline.run_full_pipeline()
 
 - [x] Create a sample dataset
 - [x] Create the preprocessing pipeline
-- [ ] Feature engineering
+- [x] Feature engineering
   - [ ] One hot encoding
   - [ ] Scaling
-  - [ ] Feature engineering/extraction/selection
+  - [x] Feature engineering/extraction/selection
 - [x] Model training
   - [x] Random Forest Model
   - [x] Gradient Boosting Model

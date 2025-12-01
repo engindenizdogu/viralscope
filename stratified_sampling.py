@@ -4,10 +4,8 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 import matplotlib.pyplot as plt
-import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
-
 
 class StratifiedSampler:
     """
@@ -30,27 +28,25 @@ class StratifiedSampler:
     Outputs a stratified sample CSV.gz file ready for feature engineering.
     """
     
-    def __init__(self, target_sample_size=100000, success_percentile=90, 
-                 chunk_size=10000, random_state=42):
+    def __init__(self, target_sample_size=100000, success_percentile=90, random_state=42):
         self.target_sample_size = target_sample_size
         self.success_percentile = success_percentile
-        self.chunk_size = chunk_size
         self.random_state = random_state
-        
-    """
-    Calculate engagement score normalized by video age.
-        
-    Uses crawl_date - upload_date to normalize engagement metrics.
-    This accounts for how long the video has been live, making newer 
-    and older videos comparable.
-        
-    Engagement components:
-    - Like rate: likes / views
-    - Dislike rate: dislikes / views  
-    - Weighted score: like_rate - 0.5 * dislike_rate
-    - Time normalization: divide by days_since_upload to get rate per day
-    """
+    
     def calculate_time_normalized_engagement(self, df):
+        """
+        Calculate engagement score normalized by video age.
+        
+        Uses crawl_date - upload_date to normalize engagement metrics.
+        This accounts for how long the video has been live, making newer 
+        and older videos comparable.
+        
+        Engagement components:
+        - Like rate: likes / views
+        - Dislike rate: dislikes / views  
+        - Weighted score: like_rate - 0.5 * dislike_rate
+        - Time normalization: divide by days_since_upload to get rate per day
+        """
         print("Calculating time-normalized engagement scores...")
         
         # Convert dates (use mixed format to handle variations)
@@ -85,14 +81,16 @@ class StratifiedSampler:
         # Normalize by video age to get engagement rate per day
         df['engagement_per_day'] = df['engagement_raw'] / df['days_since_upload']
         
-        print(f"Engagement score stats:")
-        print(df['engagement_per_day'].describe())
+        #print(f"Engagement score stats:")
+        #print(df['engagement_per_day'].describe())
         
         return df
     
-    # Load precomputed random sample and merge with channels and comments.
-    # No timeseries needed - engagement calculated directly from metadata.
     def load_data_with_sampling(self, metadata_path, channels_path, timeseries_path):
+        """
+        Load precomputed random sample and merge with channels and timeseries data.
+        Engagement is calculated directly from metadata.
+        """
         print("Loading channels data...")
         channels_df = pd.read_csv(channels_path, sep='\t', compression='gzip')
 
@@ -108,7 +106,7 @@ class StratifiedSampler:
         metadata_df = self.calculate_time_normalized_engagement(metadata_df)
 
         # Merge with channels and comments
-        print("\nMerging with channel and comment data...")
+        print("\nMerging with channel data...")
         merged_df = metadata_df.merge(
             channels_df,
             left_on='channel_id',
@@ -136,20 +134,16 @@ class StratifiedSampler:
             right_on=['channel'],
             how='left'
         )
-
-        # Column cleanup before moving on
-        # 'channel_id' left in for debugging/testing purposes. It will be removed in 'feature_engineering.py'
-        merged_df.drop(columns=['upload_date', 'crawl_date', 'upload_date_dt', 'crawl_date_dt', 'view_count', 'like_count',
-                         'dislike_count', 'like_rate', 'dislike_rate', 'engagement_raw', 'days_since_upload', 'channel_x',
-                         'channel_y', 'display_id', 'category_cc', 'join_date', 'name_cc', 'subscriber_rank_sb'], inplace=True)
         
         print(f"Final merged dataset: {len(merged_df):,} rows")
         return merged_df
 
-    # Create a stratified sample of `size` rows based on the binary target variable.
-    # Preserves class balance between 0/1 in `target_col`.
     def stratified_downsample_by_target(self, df: pd.DataFrame, target_col: str = 'is_successful', 
                                          size: int = 100000) -> pd.DataFrame:
+        """
+        Create a stratified sample of `size` rows based on the binary target variable.
+        Preserves class balance between 0/1 in `target_col`.
+        """
 
         if target_col not in df.columns:
             raise ValueError(f"Target column '{target_col}' not found for stratified sampling")
@@ -164,11 +158,12 @@ class StratifiedSampler:
             return df.iloc[test_idx].copy()
         return df.sample(n=size, random_state=self.random_state)
     
-    # Create binary target: 1 if video is in top 10% by time-normalized engagement, 0 otherwise.
     def create_target_variable(self, df):
+        """
+        Create binary target: 1 if video is in top 10% by time-normalized engagement, 0 otherwise.
+        """
         engagement_threshold = df['engagement_per_day'].quantile(self.success_percentile / 100)
         df['is_successful'] = (df['engagement_per_day'] >= engagement_threshold).astype(int)
-        df.drop(columns=['engagement_per_day'], inplace=True)
         
         print(f"\nTarget variable distribution:")
         print(df['is_successful'].value_counts())
@@ -176,8 +171,8 @@ class StratifiedSampler:
         
         return df
     
-    # Plot and save target variable distribution.
     def plot_target_distribution(self, df, output_path='target_distribution.png'):
+        """Plot and save target variable distribution."""
         plt.figure(figsize=(10, 6))
         counts = df['is_successful'].value_counts().sort_index()
         
@@ -206,8 +201,8 @@ class StratifiedSampler:
         print(f"Target distribution plot saved: {output_path}")
         plt.close()
     
-    # Execute data loading, target creation, stratified sampling, and save outputs.
     def run_sampling_pipeline(self, metadata_path, channels_path, timeseries_path, output_csv_path, output_plot_path):
+        """Execute data loading, target creation, stratified sampling, and save outputs."""
         print("="*70)
         print("STRATIFIED SAMPLING PIPELINE")
         print("="*70)
@@ -257,7 +252,6 @@ if __name__ == "__main__":
     sampler = StratifiedSampler(
         target_sample_size=100000,
         success_percentile=90,
-        chunk_size=10000,
         random_state=42
     )
     
