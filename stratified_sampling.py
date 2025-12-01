@@ -4,10 +4,8 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 import matplotlib.pyplot as plt
-import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
-
 
 class StratifiedSampler:
     """
@@ -30,13 +28,11 @@ class StratifiedSampler:
     Outputs a stratified sample CSV.gz file ready for feature engineering.
     """
     
-    def __init__(self, target_sample_size=100000, success_percentile=90, 
-                 chunk_size=10000, random_state=42):
+    def __init__(self, target_sample_size=100000, success_percentile=90, random_state=42):
         self.target_sample_size = target_sample_size
         self.success_percentile = success_percentile
-        self.chunk_size = chunk_size
         self.random_state = random_state
-        
+    
     def calculate_time_normalized_engagement(self, df):
         """
         Calculate engagement score normalized by video age.
@@ -85,21 +81,21 @@ class StratifiedSampler:
         # Normalize by video age to get engagement rate per day
         df['engagement_per_day'] = df['engagement_raw'] / df['days_since_upload']
         
-        print(f"Engagement score stats:")
-        print(df['engagement_per_day'].describe())
+        #print(f"Engagement score stats:")
+        #print(df['engagement_per_day'].describe())
         
         return df
     
-    def load_data_with_sampling(self, metadata_path, channels_path, comments_count_path):
+    def load_data_with_sampling(self, metadata_path, channels_path, timeseries_path):
         """
-        Load precomputed random sample and merge with channels and comments.
-        No timeseries needed - engagement calculated directly from metadata.
+        Load precomputed random sample and merge with channels and timeseries data.
+        Engagement is calculated directly from metadata.
         """
         print("Loading channels data...")
         channels_df = pd.read_csv(channels_path, sep='\t', compression='gzip')
 
-        print("Loading comments count data...")
-        comments_df = pd.read_csv(comments_count_path, sep='\t', compression='gzip')
+        print("Loading timeseries data...")
+        timeseries_df = pd.read_csv(timeseries_path, sep='\t', compression='gzip')
 
         # Load precomputed random sample CSV.gz for metadata
         print("Loading precomputed random sample metadata...")
@@ -110,7 +106,7 @@ class StratifiedSampler:
         metadata_df = self.calculate_time_normalized_engagement(metadata_df)
 
         # Merge with channels and comments
-        print("\nMerging with channel and comment data...")
+        print("\nMerging with channel data...")
         merged_df = metadata_df.merge(
             channels_df,
             left_on='channel_id',
@@ -119,10 +115,23 @@ class StratifiedSampler:
             suffixes=('', '_channel')
         )
 
+        # Group by channel and get the earliest and latest records
+        timeseries_df.drop(columns=['category','delta_views','delta_subs','delta_videos','activity','subs','videos'], axis=1, inplace=True)
+        timeseries_df['views'] = timeseries_df['views'].astype(int)
+        timeseries_df['datetime'] = pd.to_datetime(timeseries_df['datetime'])
+        groupby_channels = timeseries_df.groupby('channel')
+        latest = timeseries_df.loc[groupby_channels['datetime'].idxmax()].set_index('channel')
+
+        # Build summary with aligned indexes to avoid length/index mismatch
+        channel_views = pd.DataFrame({
+            'channel': latest.index,
+            'channel_views': latest['views']
+        }).reset_index(drop=True)
+
         merged_df = merged_df.merge(
-            comments_df,
-            left_on='display_id',
-            right_on='display_id',
+            channel_views,
+            left_on=['channel_id'],
+            right_on=['channel'],
             how='left'
         )
         
@@ -135,6 +144,7 @@ class StratifiedSampler:
         Create a stratified sample of `size` rows based on the binary target variable.
         Preserves class balance between 0/1 in `target_col`.
         """
+
         if target_col not in df.columns:
             raise ValueError(f"Target column '{target_col}' not found for stratified sampling")
 
@@ -162,9 +172,7 @@ class StratifiedSampler:
         return df
     
     def plot_target_distribution(self, df, output_path='target_distribution.png'):
-        """
-        Plot and save target variable distribution.
-        """
+        """Plot and save target variable distribution."""
         plt.figure(figsize=(10, 6))
         counts = df['is_successful'].value_counts().sort_index()
         
@@ -193,19 +201,14 @@ class StratifiedSampler:
         print(f"Target distribution plot saved: {output_path}")
         plt.close()
     
-    def run_sampling_pipeline(self, metadata_path, channels_path, comments_count_path, 
-                               output_csv_path, output_plot_path):
-        """
-        Execute data loading, target creation, stratified sampling, and save outputs.
-        """
+    def run_sampling_pipeline(self, metadata_path, channels_path, timeseries_path, output_csv_path, output_plot_path):
+        """Execute data loading, target creation, stratified sampling, and save outputs."""
         print("="*70)
         print("STRATIFIED SAMPLING PIPELINE")
         print("="*70)
         
         # Load and merge data (no timeseries needed)
-        df = self.load_data_with_sampling(
-            metadata_path, channels_path, comments_count_path
-        )
+        df = self.load_data_with_sampling(metadata_path, channels_path, timeseries_path)
         
         # Create target variable
         df = self.create_target_variable(df)
@@ -249,7 +252,6 @@ if __name__ == "__main__":
     sampler = StratifiedSampler(
         target_sample_size=100000,
         success_percentile=90,
-        chunk_size=10000,
         random_state=42
     )
     
@@ -257,7 +259,7 @@ if __name__ == "__main__":
     stratified_df = sampler.run_sampling_pipeline(
         metadata_path='SampleData/random_sample_raw_yt_metadata.csv.gz',
         channels_path='RawData/_raw_df_channels.tsv.gz',
-        comments_count_path='RawData/num_comments.tsv.gz',
+        timeseries_path='RawData/_raw_df_timeseries.tsv.gz',
         output_csv_path='SampleData/stratified_sample_raw_yt_metadata.csv.gz',
         output_plot_path='Docs/target_dist_stratified.png'
     )

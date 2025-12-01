@@ -33,7 +33,6 @@ class ModelTrainer:
         self.random_state = random_state
         self.scaler = StandardScaler()
         self.models = {}
-        self.feature_names = []
         
     def prepare_train_test_split(self, X, y):
         """
@@ -145,8 +144,7 @@ class ModelTrainer:
             'confusion_matrix': cm
         }
     
-    def plot_feature_importance(self, model, feature_names, model_name="Model", 
-                                 output_path=None, top_n=20):
+    def plot_feature_importance(self, model, feature_names, model_name, output_path, top_n=20):
         """
         Plot and save feature importance.
         """
@@ -164,16 +162,11 @@ class ModelTrainer:
         plt.ylabel('Importance', fontsize=12)
         plt.grid(axis='y', alpha=0.3)
         plt.tight_layout()
-        
-        if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
-            print(f"Feature importance plot saved: {output_path}")
-        else:
-            plt.show()
-        
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
+        print(f"Feature importance plot saved: {output_path}")
     
-    def plot_confusion_matrix(self, cm, model_name="Model", output_path=None):
+    def plot_confusion_matrix(self, cm, model_name, output_path):
         """
         Plot and save confusion matrix heatmap.
         """
@@ -185,14 +178,9 @@ class ModelTrainer:
         plt.xlabel('Predicted Label', fontsize=12)
         plt.ylabel('True Label', fontsize=12)
         plt.tight_layout()
-        
-        if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
-            print(f"Confusion matrix plot saved: {output_path}")
-        else:
-            plt.show()
-        
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
+        print(f"Confusion matrix plot saved: {output_path}")
     
     def save_models(self, output_dir='models'):
         """
@@ -213,14 +201,6 @@ class ModelTrainer:
                 pickle.dump(model, f)
             print(f"Model saved: {model_path}")
     
-    def load_model(self, model_path):
-        """
-        Load a trained model from disk.
-        """
-        with open(model_path, 'rb') as f:
-            model = pickle.load(f)
-        return model
-    
     def run_training_pipeline(self, X, y, feature_names, output_dir='models'):
         """
         Execute complete model training and evaluation pipeline.
@@ -238,8 +218,6 @@ class ModelTrainer:
         print("MODEL TRAINING PIPELINE")
         print("="*70)
         
-        self.feature_names = feature_names
-        
         # Prepare train/test split
         X_train, X_test, y_train, y_test = self.prepare_train_test_split(X, y)
         
@@ -251,8 +229,7 @@ class ModelTrainer:
         rf_results = self.evaluate_model(rf_model, X_test, y_test, "Random Forest")
         gb_results = self.evaluate_model(gb_model, X_test, y_test, "Gradient Boosting")
         
-        # Create output directory
-        os.makedirs(output_dir, exist_ok=True)
+        # Create output directories
         plots_dir = os.path.join(output_dir, 'plots')
         os.makedirs(plots_dir, exist_ok=True)
         
@@ -311,11 +288,18 @@ if __name__ == "__main__":
     df = pd.read_csv(input_path, compression='gzip', low_memory=False)
     print(f"Loaded {len(df):,} rows")
     
-    # Import FeatureEngineer to prepare features
-    from feature_engineering import FeatureEngineer
+    # Prepare features and target
+    print("\nPreparing features and target variable...")
+    y = df['is_successful']
+    X = df.drop(columns=['is_successful'])
+    feature_names = list(X.columns)
     
-    engineer = FeatureEngineer(random_state=42)
-    X, y, feature_names = engineer.prepare_features_and_target(df)
+    # Handle missing and infinite values
+    X = X.fillna(0)
+    X = X.replace([np.inf, -np.inf], 0)
+    
+    print(f"Feature matrix shape: {X.shape}")
+    print(f"Features used: {feature_names}")
     
     # Initialize and run model trainer
     trainer = ModelTrainer(test_size=0.2, random_state=42)

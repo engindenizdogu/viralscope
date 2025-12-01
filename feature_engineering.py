@@ -6,7 +6,6 @@ from sklearn.preprocessing import LabelEncoder
 import warnings
 warnings.filterwarnings('ignore')
 
-
 class FeatureEngineer:
     """
     Feature engineering for YouTube trend prediction.
@@ -43,9 +42,9 @@ class FeatureEngineer:
         features_df['description_word_count'] = features_df['description'].fillna('').str.split().str.len()
         features_df['has_description'] = (features_df['description_length'] > 0).astype(int)
         
-        # Tags features
+        # Tags features (tags are comma-separated strings)
         features_df['num_tags'] = features_df['tags'].fillna('').apply(
-            lambda x: len(x) if isinstance(x, list) else 0
+            lambda x: len(set(tag.strip().lower() for tag in x.split(',') if tag.strip())) if x else 0
         )
         
         # Video duration (convert to minutes)
@@ -54,10 +53,9 @@ class FeatureEngineer:
         features_df['is_long_video'] = (features_df['duration_minutes'] > 20).astype(int)
         
         # Upload timing features
-        features_df['upload_date_dt'] = pd.to_datetime(features_df['upload_date'])
-        features_df['upload_day_of_week'] = features_df['upload_date_dt'].dt.dayofweek
-        features_df['upload_hour'] = features_df['upload_date_dt'].dt.hour
-        features_df['is_weekend_upload'] = (features_df['upload_day_of_week'] >= 5).astype(int)
+        features_df['upload_day_of_week'] = pd.to_datetime(features_df['upload_date_dt'], format='mixed', errors='coerce').dt.dayofweek
+        #features_df['upload_hour'] = features_df['upload_date_dt'].dt.hour
+        #features_df['is_weekend_upload'] = (features_df['upload_day_of_week'] >= 5).astype(int)
         
         # === CHANNEL CHARACTERISTICS ===
         # These are pre-existing features (before video upload) - NO DATA LEAKAGE
@@ -65,9 +63,7 @@ class FeatureEngineer:
         # Channel size and popularity (known before upload)
         features_df['channel_subscribers'] = features_df['subscribers_cc'].fillna(0)
         features_df['channel_total_videos'] = features_df['videos_cc'].fillna(0)
-        features_df['channel_subscriber_rank'] = features_df['subscriber_rank_sb'].fillna(
-            features_df['subscriber_rank_sb'].max()
-        )
+        #features_df['channel_subscriber_rank'] = features_df['subscriber_rank_sb'].fillna(features_df['subscriber_rank_sb'].max())
         
         # Channel productivity metrics (derived from pre-existing data)
         features_df['subscriber_to_video_ratio'] = features_df['channel_subscribers'] / (
@@ -78,71 +74,16 @@ class FeatureEngineer:
         features_df['log_channel_subscribers'] = np.log1p(features_df['channel_subscribers'])
         features_df['log_channel_total_videos'] = np.log1p(features_df['channel_total_videos'])
         
-        # Category encoding
+        # Category one-hot encoding
         if 'categories' in features_df.columns:
-            features_df['category'] = features_df['categories'].apply(
-                lambda x: x[0] if isinstance(x, list) and len(x) > 0 else 'Unknown'
-            )
+            # Fill missing values with 'Unknown'
+            features_df['categories'] = features_df['categories'].fillna('Unknown')
             
-            if 'category' not in self.label_encoders:
-                self.label_encoders['category'] = LabelEncoder()
-                features_df['category_encoded'] = self.label_encoders['category'].fit_transform(
-                    features_df['category'].fillna('Unknown')
-                )
-            else:
-                features_df['category_encoded'] = self.label_encoders['category'].transform(
-                    features_df['category'].fillna('Unknown')
-                )
+            # One-hot encode categories
+            category_dummies = pd.get_dummies(features_df['categories'], prefix='category')
+            features_df = pd.concat([features_df, category_dummies], axis=1)
         
         return features_df
-    
-    def prepare_features_and_target(self, df):
-        """
-        Select final features and prepare for modeling.
-        
-        ONLY includes features without data leakage:
-        - Video metadata (title, description, tags, duration)
-        - Upload timing (day, hour, weekend)
-        - Channel characteristics (pre-existing stats)
-        - Category
-        
-        EXCLUDES engagement metrics that would leak target information.
-        """
-        feature_columns = [
-            # Title features
-            'title_length', 'title_word_count', 'title_has_question', 
-            'title_has_exclamation', 'title_uppercase_ratio',
-            
-            # Description features
-            'description_length', 'description_word_count', 'has_description',
-            
-            # Tags and content
-            'num_tags', 'duration_minutes', 'is_short_video', 'is_long_video',
-            
-            # Upload timing
-            'upload_day_of_week', 'upload_hour', 'is_weekend_upload',
-            
-            # Channel characteristics (pre-existing, no leakage)
-            'channel_subscribers', 'channel_total_videos', 'channel_subscriber_rank',
-            'subscriber_to_video_ratio', 'log_channel_subscribers', 'log_channel_total_videos',
-            
-            # Category
-            'category_encoded'
-        ]
-        
-        # Filter to only existing columns
-        feature_columns = [col for col in feature_columns if col in df.columns]
-        
-        X = df[feature_columns].fillna(0)
-        y = df['is_successful']
-        
-        # Handle infinite values
-        X = X.replace([np.inf, -np.inf], 0)
-        
-        print(f"\nFeature matrix shape: {X.shape}")
-        print(f"Features used: {feature_columns}")
-        
-        return X, y, feature_columns
     
     def run_feature_engineering_pipeline(self, input_path, output_path):
         """
@@ -168,14 +109,33 @@ class FeatureEngineer:
         print("\nEngineering features...")
         features_df = self.engineer_features(df)
         
-        # Prepare features and target
-        X, y, feature_names = self.prepare_features_and_target(features_df)
+        # Save logging copy with video info before dropping columns
+        columns_to_log = ['channel_id', 'title', 'description', 'tags', 'title_length', 'title_word_count', 
+                          'title_has_question', 'title_has_exclamation', 'title_uppercase_ratio', 
+                          'description_length', 'description_word_count', 'has_description', 'num_tags']
+        df_log = features_df[columns_to_log].copy()
         
-        # Save engineered features
+        # Column cleanup - remove columns not needed for modeling
+        columns_to_drop = [
+            'upload_date', 'upload_date_dt', 'crawl_date', 'crawl_date_dt', 
+            'view_count', 'like_count', 'dislike_count', 'like_rate', 'dislike_rate', 
+            'engagement_raw', 'days_since_upload', 'channel_x', 'channel_y', 
+            'display_id', 'category_cc', 'join_date', 'name_cc', 'subscriber_rank_sb',
+            'title', 'description', 'tags', 'duration', 'engagement_per_day', 
+            'channel_id', 'subscribers_cc', 'videos_cc', 'categories'
+        ]
+        features_df.drop(columns=columns_to_drop, inplace=True)
+        
+        # Get feature names (excluding target)
+        feature_names = [col for col in features_df.columns if col != 'is_successful']
+        
+        # Save engineered features with target variable and logging file
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        df_log.to_csv(output_path.replace('data', 'data_with_video_info'), index=False, compression='gzip')
         features_df.to_csv(output_path, index=False, compression='gzip')
         print(f"\nEngineered features saved: {output_path}")
         print(f"Total features created: {len(feature_names)}")
+        print(f"Features: {feature_names}")
         
         # Print feature summary
         print("\nFeature Summary:")
@@ -187,7 +147,7 @@ class FeatureEngineer:
         print(f"  - Category features: 1")
         print(f"  Total predictive features: {len(feature_names)}")
         
-        return features_df, X, y, feature_names
+        return features_df
 
 
 # ============================================================================
@@ -200,7 +160,7 @@ if __name__ == "__main__":
     engineer = FeatureEngineer(random_state=42)
     
     # Run feature engineering pipeline
-    features_df, X, y, feature_names = engineer.run_feature_engineering_pipeline(
+    features_df = engineer.run_feature_engineering_pipeline(
         input_path='SampleData/stratified_sample_raw_yt_metadata.csv.gz',
         output_path='SampleData/data.csv.gz'
     )
@@ -212,5 +172,4 @@ if __name__ == "__main__":
     print("="*70)
     print(f"Elapsed time: {elapsed_time:.2f} seconds")
     print(f"Output: SampleData/data.csv.gz")
-    print(f"Features engineered: {len(feature_names)}")
-    print(f"Ready for model training!")
+    print(f"Features shape: {features_df.shape}")
