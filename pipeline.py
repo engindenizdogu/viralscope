@@ -308,8 +308,8 @@ if __name__ == "__main__":
         # Sampling parameters
         'random_sampling_ratio': 0.01,  # 1% of 85M = ~850K videos
         'random_sampling_max_lines': None,
-        'stratified_sample_size': 100_000,
-        'success_percentile': 90,  # Top 10% considered successful
+        'stratified_sample_size': 250_000,
+        'success_percentile': 80,  # Top 20% considered successful
             
         # Model parameters
         'test_size': 0.2,
@@ -317,8 +317,8 @@ if __name__ == "__main__":
             
         # Pipeline control
         'skip_random_sampling': True,  # Set True if random sample exists
-        'skip_stratified_sampling': False,  # Set True if stratified sample exists
-        'skip_feature_engineering': False,  # Set True if features exist
+        'skip_stratified_sampling': True,  # Set True if stratified sample exists
+        'skip_feature_engineering': True  # Set True if features exist
     }
 
     pipeline = TrendyTubePipeline(config=config)
