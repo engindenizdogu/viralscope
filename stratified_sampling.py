@@ -14,7 +14,7 @@ class StratifiedSampler:
     TARGET DEFINITION:
     'is_successful' = 1 if video is in top 10% by engagement rate per day
     
-    Engagement rate = (like_rate - 0.5 * dislike_rate) / days_since_upload
+    Engagement rate = (like_rate - 0.5 * dislike_rate + comment_rate) / days_since_upload
     
     INTERPRETATION:
     This captures videos with strong early engagement momentum, normalized 
@@ -22,7 +22,7 @@ class StratifiedSampler:
     
     LIMITATIONS:
     - Variable observation windows (crawl dates differ)
-    - Not predictive at a fixed time point (e.g., day 7)
+    - Not predictive at a fixed time point (videos have different ages)
     - Survivor bias (only crawled videos included)
     
     Outputs a stratified sample CSV.gz file ready for feature engineering.
@@ -43,8 +43,9 @@ class StratifiedSampler:
         
         Engagement components:
         - Like rate: likes / views
-        - Dislike rate: dislikes / views  
-        - Weighted score: like_rate - 0.5 * dislike_rate
+        - Dislike rate: dislikes / views
+        - Comment rate: comments / views
+        - Weighted score: like_rate - 0.5 * dislike_rate + comment_rate
         - Time normalization: divide by days_since_upload to get rate per day
         """
         print("Calculating time-normalized engagement scores...")
@@ -70,13 +71,15 @@ class StratifiedSampler:
         df['view_count'] = df['view_count'].fillna(1).replace(0, 1)
         df['like_count'] = df['like_count'].fillna(0)
         df['dislike_count'] = df['dislike_count'].fillna(0)
+        df['num_comms'] = df['num_comms'].fillna(0)
         
         # Calculate engagement rates
         df['like_rate'] = df['like_count'] / df['view_count']
         df['dislike_rate'] = df['dislike_count'] / df['view_count']
+        df['comment_rate'] = df['num_comms'] / df['view_count']
         
-        # Weighted engagement score (likes positive, dislikes negative)
-        df['engagement_raw'] = df['like_rate'] - (0.5 * df['dislike_rate'])
+        # Weighted engagement score (likes positive, dislikes negative, comments positive)
+        df['engagement_raw'] = df['like_rate'] - (0.5 * df['dislike_rate']) + df['comment_rate']
         
         # Normalize by video age to get engagement rate per day
         df['engagement_per_day'] = df['engagement_raw'] / df['days_since_upload']
@@ -86,10 +89,10 @@ class StratifiedSampler:
         
         return df
     
-    def load_data_with_sampling(self, metadata_path, channels_path, timeseries_path):
+    def load_data_with_sampling(self, metadata_path, channels_path, timeseries_path, comments_path):
         """
-        Load precomputed random sample and merge with channels and timeseries data.
-        Engagement is calculated directly from metadata.
+        Load precomputed random sample and merge with channels, timeseries, and comments data.
+        Engagement is calculated directly from metadata including comments.
         """
         print("Loading channels data...")
         channels_df = pd.read_csv(channels_path, sep='\t', compression='gzip')
@@ -97,10 +100,22 @@ class StratifiedSampler:
         print("Loading timeseries data...")
         timeseries_df = pd.read_csv(timeseries_path, sep='\t', compression='gzip')
 
+        print("Loading comments data...")
+        comments_df = pd.read_csv(comments_path, sep='\t', compression='gzip')
+
         # Load precomputed random sample CSV.gz for metadata
         print("Loading precomputed random sample metadata...")
         metadata_df = pd.read_csv(metadata_path, compression='gzip', low_memory=False)
         print(f"Loaded metadata sample: {len(metadata_df):,} rows")
+
+        # Merge with comments data first
+        print("\nMerging with comments data...")
+        metadata_df = metadata_df.merge(
+            comments_df,
+            on='display_id',
+            how='left'
+        )
+        print(f"After comments merge: {len(metadata_df):,} rows")
 
         # Calculate time-normalized engagement directly from metadata
         metadata_df = self.calculate_time_normalized_engagement(metadata_df)
@@ -134,6 +149,12 @@ class StratifiedSampler:
             right_on=['channel'],
             how='left'
         )
+        
+        # Calculate channel-level engagement features
+        print("\nCalculating channel-level features...")
+        merged_df['videos_cc'] = merged_df['videos_cc'].fillna(1).replace(0, 1)
+        merged_df['avg_views_per_video'] = merged_df['channel_views'] / merged_df['videos_cc']
+        merged_df['avg_subs_per_video'] = merged_df['subscribers_cc'] / merged_df['videos_cc']
         
         print(f"Final merged dataset: {len(merged_df):,} rows")
         return merged_df
@@ -201,14 +222,14 @@ class StratifiedSampler:
         print(f"Target distribution plot saved: {output_path}")
         plt.close()
     
-    def run_sampling_pipeline(self, metadata_path, channels_path, timeseries_path, output_csv_path, output_plot_path):
+    def run_sampling_pipeline(self, metadata_path, channels_path, timeseries_path, comments_path, output_csv_path, output_plot_path):
         """Execute data loading, target creation, stratified sampling, and save outputs."""
         print("="*70)
         print("STRATIFIED SAMPLING PIPELINE")
         print("="*70)
         
-        # Load and merge data (no timeseries needed)
-        df = self.load_data_with_sampling(metadata_path, channels_path, timeseries_path)
+        # Load and merge data
+        df = self.load_data_with_sampling(metadata_path, channels_path, timeseries_path, comments_path)
         
         # Create target variable
         df = self.create_target_variable(df)
@@ -259,6 +280,7 @@ if __name__ == "__main__":
     stratified_df = sampler.run_sampling_pipeline(
         metadata_path='SampleData/random_sample_raw_yt_metadata.csv.gz',
         channels_path='RawData/_raw_df_channels.tsv.gz',
+        comments_path='RawData/num_comments.tsv.gz',
         timeseries_path='RawData/_raw_df_timeseries.tsv.gz',
         output_csv_path='SampleData/stratified_sample_raw_yt_metadata.csv.gz',
         output_plot_path='Docs/target_dist_stratified.png'
@@ -271,4 +293,4 @@ if __name__ == "__main__":
     print("="*70)
     print(f"\nElapsed time: {elapsed_time:.2f} seconds")
     print(f"Final sample size: {len(stratified_df):,} videos")
-    print(f"Target: Top {100 - sampler.success_percentile}% by engagement at 7 days")
+    print(f"Target: Top {100 - sampler.success_percentile}% by time-normalized engagement")

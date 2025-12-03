@@ -3,10 +3,13 @@ import os
 import pickle
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.svm import LinearSVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
@@ -21,22 +24,26 @@ class ModelTrainer:
     on the stratified sample with engineered features.
     """
     
-    def __init__(self, test_size=0.2, random_state=42):
+    def __init__(self, test_size=0.2, random_state=42, n_jobs=-1):
         """
         Initialize ModelTrainer.
         
         Args:
             test_size: Proportion of data for testing
             random_state: Random seed for reproducibility
+            n_jobs: Number of parallel jobs (-1 uses all cores)
         """
         self.test_size = test_size
         self.random_state = random_state
-        self.scaler = StandardScaler()
+        self.n_jobs = n_jobs
         self.models = {}
+        self.evaluation_results = []
+        self.best_params = {}
         
     def prepare_train_test_split(self, X, y):
         """
         Split data into training and testing sets with stratification.
+        Note: Features are already scaled in feature_engineering.py
         """
         print("Splitting data into train and test sets...")
         X_train, X_test, y_train, y_test = train_test_split(
@@ -46,71 +53,83 @@ class ModelTrainer:
             stratify=y
         )
         
-        # Scale features
-        print("Scaling features...")
-        X_train_scaled = self.scaler.fit_transform(X_train)
-        X_test_scaled = self.scaler.transform(X_test)
-        
         print(f"Training set size: {len(X_train):,}")
         print(f"Testing set size: {len(X_test):,}")
         print(f"Training class distribution:\n{pd.Series(y_train).value_counts()}")
         print(f"Testing class distribution:\n{pd.Series(y_test).value_counts()}")
         
-        return X_train_scaled, X_test_scaled, y_train, y_test
+        return X_train, X_test, y_train, y_test
     
-    def train_random_forest(self, X_train, y_train):
+    def get_model_configs(self):
         """
-        Train Random Forest classifier.
+        Get model configurations with base estimators and hyperparameter grids.
+        
+        Returns:
+            Dictionary mapping model names to tuples of (estimator, param_grid)
         """
-        print("\n" + "="*70)
-        print("TRAINING RANDOM FOREST CLASSIFIER")
-        print("="*70)
-        
-        rf_model = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=15,
-            min_samples_split=20,
-            min_samples_leaf=10,
-            class_weight='balanced',
-            random_state=self.random_state,
-            n_jobs=-1,
-            verbose=1
-        )
-        
-        start_time = time.time()
-        rf_model.fit(X_train, y_train)
-        duration = time.time() - start_time
-        
-        print(f"Random Forest training completed in {duration:.2f} seconds")
-        self.models['random_forest'] = rf_model
-        
-        return rf_model
-    
-    def train_gradient_boosting(self, X_train, y_train):
-        """
-        Train Gradient Boosting classifier.
-        """
-        print("\n" + "="*70)
-        print("TRAINING GRADIENT BOOSTING CLASSIFIER")
-        print("="*70)
-        
-        gb_model = GradientBoostingClassifier(
-            n_estimators=100,
-            max_depth=7,
-            learning_rate=0.1,
-            subsample=0.8,
-            random_state=self.random_state,
-            verbose=1
-        )
-        
-        start_time = time.time()
-        gb_model.fit(X_train, y_train)
-        duration = time.time() - start_time
-        
-        print(f"Gradient Boosting training completed in {duration:.2f} seconds")
-        self.models['gradient_boosting'] = gb_model
-        
-        return gb_model
+        configs = {
+            "RandomForest": (
+                RandomForestClassifier(
+                    n_estimators=200, 
+                    random_state=self.random_state, 
+                    n_jobs=self.n_jobs
+                ),
+                {
+                    'n_estimators': [100],
+                    'max_depth': [10],
+                    'min_samples_split': [10],
+                    'min_samples_leaf': [5],
+                    'class_weight': ['balanced']
+                }
+            ),
+            "DecisionTree": (
+                DecisionTreeClassifier(
+                    random_state=self.random_state
+                ),
+                {
+                    'max_depth': [10],
+                    'min_samples_split': [10],
+                    'min_samples_leaf': [5],
+                    'criterion': ['entropy'] #['gini', 'entropy'],
+                    #'class_weight': ['balanced', None]
+                }
+            ),
+            "LinearSVC": (
+                LinearSVC(
+                    max_iter=20000, 
+                    random_state=self.random_state
+                ),
+                {
+                    'C': [1.0],
+                    'class_weight': ['balanced'],
+                    'max_iter': [10000]
+                }
+            ),
+            "KNN": (
+                KNeighborsClassifier(
+                    n_neighbors=5,
+                    n_jobs=self.n_jobs
+                ),
+                {
+                    'n_neighbors': [3], #, 5, 7],
+                    'weights': ['uniform'], #, 'distance'],
+                    'metric': ['euclidean'] #, 'manhattan']
+                }
+            ),
+            "MLP": (
+                MLPClassifier(
+                    hidden_layer_sizes=(128, 64), 
+                    max_iter=400, 
+                    random_state=self.random_state
+                ),
+                {
+                    'hidden_layer_sizes': [(128, 64)],
+                    'learning_rate_init': [0.01],
+                    'max_iter': [50]
+                }
+            )
+        }
+        return configs
     
     def evaluate_model(self, model, X_test, y_test, model_name="Model"):
         """
@@ -122,24 +141,61 @@ class ModelTrainer:
         
         # Predictions
         y_pred = model.predict(X_test)
-        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        
+        # Handle probability predictions (not all models support predict_proba)
+        try:
+            y_pred_proba = model.predict_proba(X_test)[:, 1]
+            roc_auc = roc_auc_score(y_test, y_pred_proba)
+        except AttributeError:
+            # For models like LinearSVC that don't have predict_proba
+            if hasattr(model, 'decision_function'):
+                y_pred_proba = model.decision_function(X_test)
+                roc_auc = roc_auc_score(y_test, y_pred_proba)
+            else:
+                y_pred_proba = None
+                roc_auc = None
+        
+        # Calculate metrics
+        accuracy = accuracy_score(y_test, y_pred)
+        precision = precision_score(y_test, y_pred, average='binary', zero_division=0)
+        recall = recall_score(y_test, y_pred, average='binary', zero_division=0)
+        f1 = f1_score(y_test, y_pred, average='binary', zero_division=0)
         
         # Classification report
         print("\nClassification Report:")
         print(classification_report(y_test, y_pred, digits=4))
         
-        # ROC-AUC Score
-        roc_auc = roc_auc_score(y_test, y_pred_proba)
-        print(f"ROC-AUC Score: {roc_auc:.4f}")
+        # Print metrics
+        print(f"\nAccuracy: {accuracy:.4f}")
+        print(f"Precision: {precision:.4f}")
+        print(f"Recall: {recall:.4f}")
+        print(f"F1-Score: {f1:.4f}")
+        if roc_auc is not None:
+            print(f"ROC-AUC Score: {roc_auc:.4f}")
         
         # Confusion Matrix
         cm = confusion_matrix(y_test, y_pred)
         print(f"\nConfusion Matrix:")
         print(cm)
         
+        # Store metrics for CSV export
+        metrics_dict = {
+            'model': model_name,
+            'accuracy': accuracy,
+            'precision': precision,
+            'recall': recall,
+            'f1_score': f1,
+            'roc_auc': roc_auc if roc_auc is not None else 'N/A'
+        }
+        self.evaluation_results.append(metrics_dict)
+        
         return {
             'y_pred': y_pred,
             'y_pred_proba': y_pred_proba,
+            'accuracy': accuracy,
+            'precision': precision,
+            'recall': recall,
+            'f1_score': f1,
             'roc_auc': roc_auc,
             'confusion_matrix': cm
         }
@@ -166,6 +222,32 @@ class ModelTrainer:
         plt.close()
         print(f"Feature importance plot saved: {output_path}")
     
+    def plot_decision_tree(self, model, feature_names, model_name, output_path, max_depth=3):
+        """
+        Plot and save decision tree visualization.
+        
+        Args:
+            model: Trained DecisionTreeClassifier
+            feature_names: List of feature names
+            model_name: Name of the model
+            output_path: Path to save the tree plot
+            max_depth: Maximum depth to display (to avoid overcrowding)
+        """
+        plt.figure(figsize=(20, 12))
+        plot_tree(model, 
+                  feature_names=feature_names,
+                  class_names=['Not Successful', 'Successful'],
+                  filled=True,
+                  rounded=True,
+                  fontsize=10,
+                  max_depth=max_depth)
+        plt.title(f'Decision Tree Visualization - {model_name} (max_depth={max_depth} shown)', 
+                  fontsize=16, fontweight='bold', pad=20)
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Decision tree visualization saved: {output_path}")
+    
     def plot_confusion_matrix(self, cm, model_name, output_path):
         """
         Plot and save confusion matrix heatmap.
@@ -184,15 +266,10 @@ class ModelTrainer:
     
     def save_models(self, output_dir='models'):
         """
-        Save trained models and scaler to disk.
+        Save trained models to disk.
+        Note: Scaler is saved in feature_engineering.py
         """
         os.makedirs(output_dir, exist_ok=True)
-        
-        # Save scaler
-        scaler_path = os.path.join(output_dir, 'scaler.pkl')
-        with open(scaler_path, 'wb') as f:
-            pickle.dump(self.scaler, f)
-        print(f"Scaler saved: {scaler_path}")
         
         # Save models
         for model_name, model in self.models.items():
@@ -200,6 +277,38 @@ class ModelTrainer:
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
             print(f"Model saved: {model_path}")
+    
+    def save_evaluation_metrics(self, output_dir='models'):
+        """
+        Save evaluation metrics to CSV file.
+        """
+        if not self.evaluation_results:
+            print("No evaluation results to save.")
+            return
+        
+        os.makedirs(output_dir, exist_ok=True)
+        metrics_path = os.path.join(output_dir, 'evaluation_metrics.csv')
+        
+        metrics_df = pd.DataFrame(self.evaluation_results)
+        metrics_df = metrics_df.sort_values('f1_score', ascending=False)
+        metrics_df.to_csv(metrics_path, index=False)
+        
+        print(f"\nEvaluation metrics saved: {metrics_path}")
+        print("\nMetrics Summary:")
+        print(metrics_df.to_string(index=False))
+        
+        # Save best hyperparameters to separate file
+        if self.best_params:
+            params_path = os.path.join(output_dir, 'best_hyperparameters.txt')
+            with open(params_path, 'w') as f:
+                f.write("Best Hyperparameters from GridSearchCV\n")
+                f.write("="*70 + "\n\n")
+                for model_name, params in self.best_params.items():
+                    f.write(f"{model_name}:\n")
+                    for param, value in params.items():
+                        f.write(f"  {param}: {value}\n")
+                    f.write("\n")
+            print(f"Best hyperparameters saved: {params_path}")
     
     def run_training_pipeline(self, X, y, feature_names, output_dir='models'):
         """
@@ -221,40 +330,85 @@ class ModelTrainer:
         # Prepare train/test split
         X_train, X_test, y_train, y_test = self.prepare_train_test_split(X, y)
         
-        # Train models
-        rf_model = self.train_random_forest(X_train, y_train)
-        gb_model = self.train_gradient_boosting(X_train, y_train)
-        
-        # Evaluate models
-        rf_results = self.evaluate_model(rf_model, X_test, y_test, "Random Forest")
-        gb_results = self.evaluate_model(gb_model, X_test, y_test, "Gradient Boosting")
+        # Get all model configurations
+        model_configs = self.get_model_configs()
         
         # Create output directories
         plots_dir = os.path.join(output_dir, 'plots')
         os.makedirs(plots_dir, exist_ok=True)
         
-        # Plot feature importance
-        self.plot_feature_importance(
-            rf_model, feature_names, "Random Forest",
-            output_path=os.path.join(plots_dir, 'rf_feature_importance.png')
-        )
-        self.plot_feature_importance(
-            gb_model, feature_names, "Gradient Boosting",
-            output_path=os.path.join(plots_dir, 'gb_feature_importance.png')
-        )
-        
-        # Plot confusion matrices
-        self.plot_confusion_matrix(
-            rf_results['confusion_matrix'], "Random Forest",
-            output_path=os.path.join(plots_dir, 'rf_confusion_matrix.png')
-        )
-        self.plot_confusion_matrix(
-            gb_results['confusion_matrix'], "Gradient Boosting",
-            output_path=os.path.join(plots_dir, 'gb_confusion_matrix.png')
-        )
+        # Train and evaluate all models
+        all_results = {}
+        for model_name, (base_model, param_grid) in model_configs.items():
+            print("\n" + "="*70)
+            print(f"TRAINING {model_name.upper()} WITH CROSS-VALIDATION")
+            print("="*70)
+            
+            # Perform GridSearchCV for hyperparameter tuning
+            if param_grid:
+                print(f"\nPerforming GridSearchCV with {len(param_grid)} hyperparameters...")
+                print(f"Parameter grid: {param_grid}")
+                
+                grid_search = GridSearchCV(
+                    estimator=base_model,
+                    param_grid=param_grid,
+                    cv=5,
+                    scoring='precision',
+                    n_jobs=self.n_jobs,
+                    verbose=1
+                )
+                
+                start_time = time.time()
+                grid_search.fit(X_train, y_train)
+                duration = time.time() - start_time
+                
+                print(f"\nGridSearchCV completed in {duration:.2f} seconds")
+                print(f"Best parameters: {grid_search.best_params_}")
+                print(f"Best CV F1 score: {grid_search.best_score_:.4f}")
+                
+                # Use best estimator
+                model = grid_search.best_estimator_
+                self.best_params[model_name] = grid_search.best_params_
+            else:
+                # Train without hyperparameter tuning
+                start_time = time.time()
+                base_model.fit(X_train, y_train)
+                duration = time.time() - start_time
+                print(f"{model_name} training completed in {duration:.2f} seconds")
+                model = base_model
+            
+            self.models[model_name] = model
+            
+            # Evaluate model
+            results = self.evaluate_model(model, X_test, y_test, model_name)
+            all_results[model_name] = results
+            
+            # Plot confusion matrix for each model
+            self.plot_confusion_matrix(
+                results['confusion_matrix'], model_name,
+                output_path=os.path.join(plots_dir, f'{model_name.lower()}_confusion_matrix.png')
+            )
+            
+            # Plot feature importance for tree-based models
+            if hasattr(model, 'feature_importances_'):
+                self.plot_feature_importance(
+                    model, feature_names, model_name,
+                    output_path=os.path.join(plots_dir, f'{model_name.lower()}_feature_importance.png')
+                )
+            
+            # Plot decision tree for DecisionTree model
+            if model_name == "DecisionTree":
+                self.plot_decision_tree(
+                    model, feature_names, model_name,
+                    output_path=os.path.join(plots_dir, f'{model_name.lower()}_tree.png'),
+                    max_depth=5  # Show only top 5 levels for readability
+                )
         
         # Save models
         self.save_models(output_dir)
+        
+        # Save evaluation metrics to CSV
+        self.save_evaluation_metrics(output_dir)
         
         print("\n" + "="*70)
         print("MODEL TRAINING PIPELINE COMPLETED")
@@ -262,8 +416,7 @@ class ModelTrainer:
         
         return {
             'models': self.models,
-            'rf_results': rf_results,
-            'gb_results': gb_results,
+            'all_results': all_results,
             'X_test': X_test,
             'y_test': y_test
         }

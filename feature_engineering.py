@@ -2,8 +2,9 @@ import os
 import time
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 import warnings
+import pickle
 warnings.filterwarnings('ignore')
 
 class FeatureEngineer:
@@ -19,6 +20,7 @@ class FeatureEngineer:
     def __init__(self, random_state=42):
         self.random_state = random_state
         self.label_encoders = {}
+        self.scaler = StandardScaler()
     
     def engineer_features(self, df):
         """
@@ -71,8 +73,16 @@ class FeatureEngineer:
         )
         
         # Log transform for skewed features
-        features_df['log_channel_subscribers'] = np.log1p(features_df['channel_subscribers'])
-        features_df['log_channel_total_videos'] = np.log1p(features_df['channel_total_videos'])
+        #features_df['log_channel_subscribers'] = np.log1p(features_df['channel_subscribers'])
+        #features_df['log_channel_total_videos'] = np.log1p(features_df['channel_total_videos'])
+        
+        # Upload day of week one-hot encoding
+        if 'upload_day_of_week' in features_df.columns:
+            # One-hot encode upload day of week
+            day_dummies = pd.get_dummies(features_df['upload_day_of_week'], prefix='day')
+            features_df = pd.concat([features_df, day_dummies], axis=1)
+            # Drop original upload_day_of_week column
+            features_df.drop(columns=['upload_day_of_week'], inplace=True)
         
         # Category one-hot encoding
         if 'categories' in features_df.columns:
@@ -82,6 +92,13 @@ class FeatureEngineer:
             # One-hot encode categories
             category_dummies = pd.get_dummies(features_df['categories'], prefix='category')
             features_df = pd.concat([features_df, category_dummies], axis=1)
+        
+        # Ensure binary features are integers (they're already 0/1, so no scaling needed)
+        binary_features = ['title_has_question', 'title_has_exclamation', 'has_description', 
+                          'is_short_video', 'is_long_video']
+        for col in binary_features:
+            if col in features_df.columns:
+                features_df[col] = features_df[col].astype(int)
         
         return features_df
     
@@ -122,12 +139,29 @@ class FeatureEngineer:
             'engagement_raw', 'days_since_upload', 'channel_x', 'channel_y', 
             'display_id', 'category_cc', 'join_date', 'name_cc', 'subscriber_rank_sb',
             'title', 'description', 'tags', 'duration', 'engagement_per_day', 
-            'channel_id', 'subscribers_cc', 'videos_cc', 'categories'
-        ]
+            'channel_id', 'subscribers_cc', 'videos_cc', 'categories', 'num_comms']
         features_df.drop(columns=columns_to_drop, inplace=True)
         
         # Get feature names (excluding target)
         feature_names = [col for col in features_df.columns if col != 'is_successful']
+        
+        # Scale numerical features (but not one-hot encoded categorical features or binary features)
+        print("\nScaling numerical features...")
+        categorical_cols = [col for col in feature_names if col.startswith('category_') or col.startswith('day_')]
+        binary_cols = ['title_has_question', 'title_has_exclamation', 'has_description', 
+                      'is_short_video', 'is_long_video']
+        binary_cols = [col for col in binary_cols if col in feature_names]
+        
+        # Numerical columns are those that are neither categorical nor binary
+        numerical_cols = [col for col in feature_names if col not in categorical_cols and col not in binary_cols]
+        
+        print(f"Categorical features (not scaled): {len(categorical_cols)}")
+        print(f"Binary features (not scaled): {len(binary_cols)}")
+        print(f"Numerical features (scaled): {len(numerical_cols)}")
+        
+        if numerical_cols:
+            features_df[numerical_cols] = self.scaler.fit_transform(features_df[numerical_cols])
+            print(f"Scaled {len(numerical_cols)} numerical features")
         
         # Save engineered features with target variable and logging file
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -136,6 +170,12 @@ class FeatureEngineer:
         print(f"\nEngineered features saved: {output_path}")
         print(f"Total features created: {len(feature_names)}")
         print(f"Features: {feature_names}")
+        
+        # Save scaler for later use in model training/prediction
+        scaler_path = output_path.replace('data.csv.gz', 'scaler.pkl')
+        with open(scaler_path, 'wb') as f:
+            pickle.dump(self.scaler, f)
+        print(f"Scaler saved: {scaler_path}")
         
         # Print feature summary
         print("\nFeature Summary:")
