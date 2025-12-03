@@ -19,7 +19,7 @@ class RandomSampler:
     Outputs a random sample CSV.gz file for stratified sampling.
     """
     
-    def __init__(self, ratio=0.01, max_lines=None, log_every=1_000_000, random_state=42):
+    def __init__(self, ratio=0.01, max_lines=None, log_every=1_000_000, random_state=42, min_views_per_day=10):
         """
         Initialize RandomSampler.
         
@@ -28,11 +28,13 @@ class RandomSampler:
             max_lines: Optional cap on lines to read
             log_every: Progress logging frequency
             random_state: Random seed for reproducibility
+            min_views_per_day: Minimum views per day threshold to filter low-engagement videos
         """
         self.ratio = ratio
         self.max_lines = max_lines
         self.log_every = log_every
         self.random_state = random_state
+        self.min_views_per_day = min_views_per_day
         
         # Set random seed
         random.seed(random_state)
@@ -69,10 +71,12 @@ class RandomSampler:
     def sample_rows(self, source_path, target_samples):
         """
         Sample rows using Bernoulli sampling with early stopping.
+        Filters out low-engagement videos based on views per day.
         """
         selected = []
         lines_read = 0
         malformed_count = 0
+        filtered_low_engagement = 0
         
         with open(source_path, 'rb') as fh:
             dctx = zstd.ZstdDecompressor()
@@ -88,7 +92,33 @@ class RandomSampler:
                     
                     if random.random() < self.ratio:
                         try:
-                            selected.append(json.loads(line))
+                            record = json.loads(line)
+                            
+                            # Calculate views per day to filter low-engagement videos
+                            if self.min_views_per_day > 0:
+                                upload_date = pd.to_datetime(record.get('upload_date'), format='mixed', errors='coerce')
+                                crawl_date = pd.to_datetime(record.get('crawl_date'), format='mixed', errors='coerce')
+                                view_count = record.get('view_count', 0)
+                                
+                                # Skip if dates are invalid or view_count is missing
+                                if pd.isna(upload_date) or pd.isna(crawl_date) or view_count is None:
+                                    filtered_low_engagement += 1
+                                    continue
+                                
+                                days_since_upload = (crawl_date - upload_date).total_seconds() / 86400
+                                
+                                # Skip videos with invalid time ranges or low engagement
+                                if days_since_upload < 1.0:
+                                    filtered_low_engagement += 1
+                                    continue
+                                
+                                views_per_day = view_count / days_since_upload
+                                
+                                if views_per_day < self.min_views_per_day:
+                                    filtered_low_engagement += 1
+                                    continue
+                            
+                            selected.append(record)
                         except json.JSONDecodeError:
                             malformed_count += 1
                             continue
@@ -97,7 +127,7 @@ class RandomSampler:
                     if lines_read % self.log_every == 0:
                         logging.info(
                             f"Read {lines_read:,} lines | Collected {len(selected):,} samples | "
-                            f"Malformed {malformed_count}"
+                            f"Filtered low-engagement: {filtered_low_engagement:,} | Malformed {malformed_count}"
                         )
                     
                     # Early stop if we have enough samples
@@ -105,7 +135,7 @@ class RandomSampler:
                         logging.info(f"Collected target samples: {len(selected):,}. Stopping early.")
                         break
         
-        return selected, malformed_count
+        return selected, malformed_count, filtered_low_engagement
     
     def run_sampling(self, source_path, output_path):
         """
@@ -125,6 +155,7 @@ class RandomSampler:
         logging.info("="*70)
         logging.info(f"Source file: {source_path}")
         logging.info(f"Sampling ratio: {self.ratio}")
+        logging.info(f"Min views per day threshold: {self.min_views_per_day}")
         
         # Count total rows
         total_rows = self.count_rows(source_path)
@@ -134,7 +165,7 @@ class RandomSampler:
         logging.info(f"Target samples (approx): {target_samples:,}")
         
         # Sample rows
-        selected, malformed_count = self.sample_rows(source_path, target_samples)
+        selected, malformed_count, filtered_low_engagement = self.sample_rows(source_path, target_samples)
         
         # Create DataFrame
         sample_df = pd.DataFrame(selected)
@@ -147,11 +178,13 @@ class RandomSampler:
         
         # Print and log results
         print(f"\nSampled rows (~{self.ratio*100:.1f}% target): {len(sample_df):,}")
+        print(f"Filtered low-engagement videos (< {self.min_views_per_day} views/day): {filtered_low_engagement:,}")
         print(f"Malformed lines skipped: {malformed_count}")
         print(f"Saved: {output_path}")
         print(f"Elapsed time: {duration:.2f} seconds")
         
         logging.info(f"Sampled rows: {len(sample_df):,}")
+        logging.info(f"Filtered low-engagement: {filtered_low_engagement:,}")
         logging.info(f"Malformed lines skipped: {malformed_count}")
         logging.info(f"Saved: {output_path}")
         logging.info(f"Elapsed time: {duration:.2f} seconds")
@@ -165,10 +198,11 @@ class RandomSampler:
 if __name__ == "__main__":
     # Initialize sampler
     sampler = RandomSampler(
-        ratio=0.01,
+        ratio=0.025,
         max_lines=None,
         log_every=1_000_000,
-        random_state=42
+        random_state=42,
+        min_views_per_day=10000  # Filter videos with < 10000 views per day
     )
     
     # Run sampling

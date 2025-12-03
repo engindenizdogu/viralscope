@@ -3,20 +3,21 @@ YouTube Trendy Tube - Complete ML Pipeline
 ==========================================
 
 This pipeline orchestrates the complete workflow for predicting YouTube video success:
-1. Random sampling from raw compressed metadata
-2. Stratified sampling based on engagement metrics
+1. Random sampling from raw compressed metadata (with view threshold filtering)
+2. Data preparation: Merge with channels/timeseries/comments and calculate engagement metrics
 3. Feature engineering from video and channel characteristics
-4. Model training and evaluation
+4. Model training and evaluation (labels created here to prevent data leakage)
 """
 
 import os
 import time
+import pickle
 import pandas as pd
 from datetime import datetime
 
 # Import custom modules
 from random_sampling import RandomSampler
-from stratified_sampling import StratifiedSampler
+from data_preparation import DataPreparation
 from feature_engineering import FeatureEngineer
 from model_training import ModelTrainer
 
@@ -27,9 +28,9 @@ class TrendyTubePipeline:
     
     Pipeline stages:
     1. Random Sampling: Sample from 85M+ videos using Bernoulli sampling
-    2. Stratified Sampling: Create balanced dataset based on engagement
+    2. Data Preparation: Merge with channels/timeseries/comments and calculate engagement
     3. Feature Engineering: Extract and engineer predictive features
-    4. Model Training: Train and evaluate classification models
+    4. Model Training: Create labels and train classification models
     """
     
     def __init__(self, config=None):
@@ -52,20 +53,20 @@ class TrendyTubePipeline:
             'raw_metadata_path': 'RawData/_raw_yt_metadata.jsonl.zst',
             'channels_path': 'RawData/_raw_df_channels.tsv.gz',
             'timeseries_path': 'RawData/_raw_df_timeseries.tsv.gz',
-
+            'comments_path': 'RawData/num_comments.tsv.gz',
             
             # Output paths
             'random_sample_output': 'SampleData/random_sample_raw_yt_metadata.csv.gz',
-            'stratified_sample_output': 'SampleData/stratified_sample_raw_yt_metadata.csv.gz',
-            'engineered_features_output': 'SampleData/data.csv.gz',
-            'models_output_dir': 'models',
-            'plots_output_dir': 'Docs',
+            'prepared_data_output': 'SampleData/prepared_data.csv.gz',
+            'feature_engineering_output_dir': 'SampleData',  # Directory for X_train, X_test, y_train, y_test
+            'models_output_dir': 'Models',
             
             # Sampling parameters
             'random_sampling_ratio': 0.01,  # 1% of 85M = ~850K videos
             'random_sampling_max_lines': None,
-            'stratified_sample_size': 100_000,
-            'success_percentile': 90,  # Top 10% considered successful
+            'random_sampling_min_views_per_day': 10,  # Filter low-engagement videos
+            'preparation_sample_size': 100_000,  # Downsample after merging if needed
+            'success_percentile': 90,  # Top 10% considered successful (used in model training)
             
             # Model parameters
             'test_size': 0.2,
@@ -73,7 +74,7 @@ class TrendyTubePipeline:
             
             # Pipeline control
             'skip_random_sampling': False,  # Set True if random sample exists
-            'skip_stratified_sampling': False,  # Set True if stratified sample exists
+            'skip_data_preparation': False,  # Set True if prepared data exists
             'skip_feature_engineering': False,  # Set True if features exist
         }
     
@@ -97,14 +98,14 @@ class TrendyTubePipeline:
             print(f"  {self.config['random_sample_output']}")
             random_df = pd.read_csv(self.config['random_sample_output'], compression='gzip')
             print(f"Loaded {len(random_df):,} rows from existing random sample")
-            self.results['random_sample'] = random_df
             return random_df
         
         # Initialize sampler
         sampler = RandomSampler(
             ratio=self.config['random_sampling_ratio'],
             max_lines=self.config['random_sampling_max_lines'],
-            random_state=self.config['random_state']
+            random_state=self.config['random_state'],
+            min_views_per_day=self.config['random_sampling_min_views_per_day']
         )
         
         # Run sampling
@@ -113,119 +114,131 @@ class TrendyTubePipeline:
             output_path=self.config['random_sample_output']
         )
         
-        self.results['random_sample'] = random_df
         print(f"\n✓ Stage 1 completed: {len(random_df):,} videos sampled")
         return random_df
     
-    def stage2_stratified_sampling(self):
+    def stage2_data_preparation(self):
         """
-        Stage 2: Stratified sampling based on engagement metrics.
+        Stage 2: Merge data sources and calculate engagement metrics.
         """
-        self.print_stage_header("Stratified Sampling", 2)
+        self.print_stage_header("Data Preparation", 2)
         
-        if self.config['skip_stratified_sampling'] and os.path.exists(self.config['stratified_sample_output']):
-            print(f"Skipping stratified sampling - using existing file:")
-            print(f"  {self.config['stratified_sample_output']}")
-            stratified_df = pd.read_csv(self.config['stratified_sample_output'], compression='gzip')
-            print(f"Loaded {len(stratified_df):,} rows from existing stratified sample")
-            self.results['stratified_sample'] = stratified_df
-            return stratified_df
+        if self.config['skip_data_preparation'] and os.path.exists(self.config['prepared_data_output']):
+            print(f"Skipping data preparation - using existing file:")
+            print(f"  {self.config['prepared_data_output']}")
+            prepared_df = pd.read_csv(self.config['prepared_data_output'], compression='gzip')
+            print(f"Loaded {len(prepared_df):,} rows from existing prepared data")
+            return prepared_df
         
-        # Initialize stratified sampler
-        sampler = StratifiedSampler(
-            target_sample_size=self.config['stratified_sample_size'],
-            success_percentile=self.config['success_percentile'],
+        # Initialize data preparation
+        prep = DataPreparation(
+            target_sample_size=self.config['preparation_sample_size'],
             random_state=self.config['random_state']
         )
         
-        # Run stratified sampling pipeline
-        stratified_df = sampler.run_sampling_pipeline(
+        # Run data preparation pipeline
+        prepared_df = prep.run_preparation_pipeline(
             metadata_path=self.config['random_sample_output'],
             channels_path=self.config['channels_path'],
             timeseries_path=self.config['timeseries_path'],
-            output_csv_path=self.config['stratified_sample_output'],
-            output_plot_path=os.path.join(
-                self.config['plots_output_dir'], 
-                'target_dist_stratified.png'
-            )
+            comments_path=self.config['comments_path'],
+            output_csv_path=self.config['prepared_data_output']
         )
         
-        self.results['stratified_sample'] = stratified_df
-        print(f"\n✓ Stage 2 completed: {len(stratified_df):,} videos in stratified sample")
-        return stratified_df
+        print(f"\n✓ Stage 2 completed: {len(prepared_df):,} videos prepared with engagement metrics")
+        return prepared_df
     
     def stage3_feature_engineering(self):
         """
         Stage 3: Feature engineering from video and channel metadata.
+        Creates train/test split with proper label creation and scaling.
         """
-        self.print_stage_header("Feature Engineering", 3)
+        self.print_stage_header("Feature Engineering & Train/Test Split", 3)
         
-        if self.config['skip_feature_engineering'] and os.path.exists(self.config['engineered_features_output']):
-            print(f"Skipping feature engineering - using existing file:")
-            print(f"  {self.config['engineered_features_output']}")
-            features_df = pd.read_csv(self.config['engineered_features_output'], compression='gzip')
-            print(f"Loaded {len(features_df):,} rows with engineered features")
+        output_dir = self.config['feature_engineering_output_dir']
+
+        if self.config['skip_feature_engineering']:
+            print(f"Skipping feature engineering - using existing files in: {output_dir}")
+            X_train = pd.read_csv(os.path.join(output_dir, 'X_train.csv.gz'), compression='gzip')
+            X_test = pd.read_csv(os.path.join(output_dir, 'X_test.csv.gz'), compression='gzip')
+            y_train = pd.read_csv(os.path.join(output_dir, 'y_train.csv.gz'), compression='gzip')['y_train']
+            y_test = pd.read_csv(os.path.join(output_dir, 'y_test.csv.gz'), compression='gzip')['y_test']
             
-            self.results['features_df'] = features_df
-            return features_df
+            with open(os.path.join(output_dir, 'feature_names.pkl'), 'rb') as f:
+                feature_names = pickle.load(f)
+            
+            print(f"Loaded pre-split datasets:")
+            print(f"  X_train: {X_train.shape}")
+            print(f"  X_test: {X_test.shape}")
+            
+            result = {
+                'X_train': X_train,
+                'X_test': X_test,
+                'y_train': y_train,
+                'y_test': y_test,
+                'feature_names': feature_names
+            }
+            self.results['feature_engineering'] = result
+            return result
         
-        # Load stratified sample
-        stratified_df = self.results.get('stratified_sample')
-        if stratified_df is None:
-            stratified_df = pd.read_csv(self.config['stratified_sample_output'], compression='gzip')
-        
-        # Initialize feature engineer
-        engineer = FeatureEngineer(random_state=self.config['random_state'])
-        
-        # Run feature engineering pipeline
-        print("Engineering features from video and channel metadata...")
-        features_df = engineer.run_feature_engineering_pipeline(
-            input_path=self.config['stratified_sample_output'],
-            output_path=self.config['engineered_features_output']
+        # Initialize feature engineer with train/test split parameters
+        engineer = FeatureEngineer(
+            test_size=self.config['test_size'],
+            random_state=self.config['random_state'],
+            success_percentile=self.config['success_percentile']
         )
         
-        self.results['features_df'] = features_df
+        # Run feature engineering pipeline (includes train/test split and scaling)
+        print("Engineering features and creating train/test split...")
+        result = engineer.run_feature_engineering_pipeline(
+            input_path=self.config['prepared_data_output'],
+            output_dir=output_dir
+        )
         
-        print(f"\n✓ Stage 3 completed: {features_df.shape[1] - 1} features engineered")
-        return features_df
+        self.results['feature_engineering'] = result
+        
+        print(f"\n✓ Stage 3 completed: {len(result['feature_names'])} features engineered and split into train/test sets")
+        print(f"   Train/test datasets saved to: {output_dir}")
+        return result
     
     def stage4_model_training(self):
         """
-        Stage 4: Train and evaluate classification models.
+        Stage 4: Train and evaluate classification models using pre-split data.
         """
         self.print_stage_header("Model Training & Evaluation", 4)
         
-        # Get features dataframe
-        features_df = self.results.get('features_df')
+        # Get feature engineering results from memory (loaded in stage 3)
+        feature_result = self.results.get('feature_engineering')
         
-        if features_df is None:
-            # Load from file if not in results
-            features_df = pd.read_csv(self.config['engineered_features_output'], compression='gzip')
+        if feature_result is None:
+            raise RuntimeError(
+                "Feature engineering results not found. "
+                "Please run stage3_feature_engineering() before stage4_model_training()."
+            )
         
-        # Prepare features and target
-        print("Preparing features and target variable...")
-        y = features_df['is_successful']
-        X = features_df.drop(columns=['is_successful'])
-        feature_names = list(X.columns)
+        # Use results from feature engineering stage (either newly created or loaded from files)
+        X_train = feature_result['X_train']
+        X_test = feature_result['X_test']
+        y_train = feature_result['y_train']
+        y_test = feature_result['y_test']
+        feature_names = feature_result['feature_names']
         
-        # Handle missing and infinite values
-        import numpy as np
-        X = X.fillna(0)
-        X = X.replace([np.inf, -np.inf], 0)
+        print(f"Training set size: {len(X_train):,}")
+        print(f"Testing set size: {len(X_test):,}")
+        print(f"Number of features: {len(feature_names)}")
         
-        print(f"Feature matrix shape: {X.shape}")
-        print(f"Features used: {len(feature_names)} features")
-        
-        # Initialize model trainer
+        # Initialize model trainer (no need for test_size or success_percentile - already split)
         trainer = ModelTrainer(
-            test_size=self.config['test_size'],
-            random_state=self.config['random_state']
+            random_state=self.config['random_state'],
+            n_jobs=-1
         )
         
-        # Run training pipeline
+        # Run training pipeline with pre-split data
         training_results = trainer.run_training_pipeline(
-            X=X,
-            y=y,
+            X_train=X_train,
+            X_test=X_test,
+            y_train=y_train,
+            y_test=y_test,
             feature_names=feature_names,
             output_dir=self.config['models_output_dir']
         )
@@ -254,8 +267,8 @@ class TrendyTubePipeline:
             # Stage 1: Random Sampling
             self.stage1_random_sampling()
             
-            # Stage 2: Stratified Sampling
-            self.stage2_stratified_sampling()
+            # Stage 2: Data Preparation
+            self.stage2_data_preparation()
             
             # Stage 3: Feature Engineering
             self.stage3_feature_engineering()
@@ -270,12 +283,14 @@ class TrendyTubePipeline:
             print("PIPELINE COMPLETED SUCCESSFULLY!")
             print("="*80)
             print(f"Total elapsed time: {duration:.2f} seconds ({duration/60:.2f} minutes)")
-            print(f"\nOutputs:")
+            print("\nOutputs:")
             print(f"  Random sample: {self.config['random_sample_output']}")
-            print(f"  Stratified sample: {self.config['stratified_sample_output']}")
-            print(f"  Engineered features: {self.config['engineered_features_output']}")
+            print(f"  Prepared data: {self.config['prepared_data_output']}")
+            print(f"  Train/test datasets: {self.config['feature_engineering_output_dir']}/")
+            print(f"    - X_train.csv.gz, X_test.csv.gz, y_train.csv.gz, y_test.csv.gz")
+            print(f"    - scaler.pkl, engagement_threshold.pkl, feature_names.pkl")
             print(f"  Models: {self.config['models_output_dir']}/")
-            print(f"  Plots: {self.config['plots_output_dir']}/")
+            print(f"  Plots: {self.config['models_output_dir']}/plots/")
             
             return self.results
             
@@ -297,19 +312,20 @@ if __name__ == "__main__":
         'raw_metadata_path': 'RawData/_raw_yt_metadata.jsonl.zst',
         'channels_path': 'RawData/_raw_df_channels.tsv.gz',
         'timeseries_path': 'RawData/_raw_df_timeseries.tsv.gz',
+        'comments_path': 'RawData/num_comments.tsv.gz',
             
         # Output paths
         'random_sample_output': 'SampleData/random_sample_raw_yt_metadata.csv.gz',
-        'stratified_sample_output': 'SampleData/stratified_sample_raw_yt_metadata.csv.gz',
-        'engineered_features_output': 'SampleData/data.csv.gz',
-        'models_output_dir': 'models',
-        'plots_output_dir': 'Docs',
+        'prepared_data_output': 'SampleData/prepared_data.csv.gz',
+        'feature_engineering_output_dir': 'SampleData',  # Directory for X_train, X_test, y_train, y_test
+        'models_output_dir': 'Models',
             
         # Sampling parameters
-        'random_sampling_ratio': 0.01,  # 1% of 85M = ~850K videos
+        'random_sampling_ratio': 0.025,  # 2.5% of 85M
         'random_sampling_max_lines': None,
-        'stratified_sample_size': 250_000,
-        'success_percentile': 80,  # Top 20% considered successful
+        'random_sampling_min_views_per_day': 10000,  # Filter low-engagement videos
+        'preparation_sample_size': 250_000,  # Downsample after merging if needed
+        'success_percentile': 80,  # Top 20% considered successful (used in model training)
             
         # Model parameters
         'test_size': 0.2,
@@ -317,10 +333,9 @@ if __name__ == "__main__":
             
         # Pipeline control
         'skip_random_sampling': True,  # Set True if random sample exists
-        'skip_stratified_sampling': True,  # Set True if stratified sample exists
-        'skip_feature_engineering': True  # Set True if features exist
+        'skip_data_preparation': False,  # Set True if prepared data exists
+        'skip_feature_engineering': False  # Set True if features exist
     }
 
     pipeline = TrendyTubePipeline(config=config)
     results = pipeline.run_full_pipeline()
-    #print(results)

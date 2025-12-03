@@ -3,7 +3,7 @@ import os
 import pickle
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.svm import LinearSVC
@@ -24,41 +24,19 @@ class ModelTrainer:
     on the stratified sample with engineered features.
     """
     
-    def __init__(self, test_size=0.2, random_state=42, n_jobs=-1):
+    def __init__(self, random_state=42, n_jobs=-1):
         """
         Initialize ModelTrainer.
         
         Args:
-            test_size: Proportion of data for testing
             random_state: Random seed for reproducibility
             n_jobs: Number of parallel jobs (-1 uses all cores)
         """
-        self.test_size = test_size
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.models = {}
         self.evaluation_results = []
         self.best_params = {}
-        
-    def prepare_train_test_split(self, X, y):
-        """
-        Split data into training and testing sets with stratification.
-        Note: Features are already scaled in feature_engineering.py
-        """
-        print("Splitting data into train and test sets...")
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, 
-            test_size=self.test_size, 
-            random_state=self.random_state, 
-            stratify=y
-        )
-        
-        print(f"Training set size: {len(X_train):,}")
-        print(f"Testing set size: {len(X_test):,}")
-        print(f"Training class distribution:\n{pd.Series(y_train).value_counts()}")
-        print(f"Testing class distribution:\n{pd.Series(y_test).value_counts()}")
-        
-        return X_train, X_test, y_train, y_test
     
     def get_model_configs(self):
         """
@@ -75,9 +53,9 @@ class ModelTrainer:
                     n_jobs=self.n_jobs
                 ),
                 {
-                    'n_estimators': [100],
-                    'max_depth': [10],
-                    'min_samples_split': [10],
+                    'n_estimators': [30],
+                    'max_depth': [3],
+                    'min_samples_split': [5],
                     'min_samples_leaf': [5],
                     'class_weight': ['balanced']
                 }
@@ -205,15 +183,20 @@ class ModelTrainer:
         Plot and save feature importance.
         """
         importances = model.feature_importances_
-        indices = np.argsort(importances)[::-1][:top_n]
+        
+        # Limit top_n to actual number of features
+        actual_top_n = min(top_n, len(feature_names))
+        indices = np.argsort(importances)[::-1][:actual_top_n]
         
         plt.figure(figsize=(12, 8))
-        plt.title(f'Top {top_n} Feature Importances - {model_name}', 
+        plt.title(f'Top {actual_top_n} Feature Importances - {model_name}', 
                   fontsize=14, fontweight='bold')
         plt.bar(range(len(indices)), importances[indices], color='steelblue')
-        plt.xticks(range(len(indices)), 
-                   [feature_names[i] for i in indices], 
-                   rotation=45, ha='right')
+        
+        # Get feature names using the indices
+        feature_labels = [feature_names[i] if i < len(feature_names) else f'Feature_{i}' for i in indices]
+        plt.xticks(range(len(indices)), feature_labels, rotation=45, ha='right')
+        
         plt.xlabel('Features', fontsize=12)
         plt.ylabel('Importance', fontsize=12)
         plt.grid(axis='y', alpha=0.3)
@@ -264,10 +247,9 @@ class ModelTrainer:
         plt.close()
         print(f"Confusion matrix plot saved: {output_path}")
     
-    def save_models(self, output_dir='models'):
+    def save_models(self, output_dir='Models'):
         """
         Save trained models to disk.
-        Note: Scaler is saved in feature_engineering.py
         """
         os.makedirs(output_dir, exist_ok=True)
         
@@ -278,7 +260,7 @@ class ModelTrainer:
                 pickle.dump(model, f)
             print(f"Model saved: {model_path}")
     
-    def save_evaluation_metrics(self, output_dir='models'):
+    def save_evaluation_metrics(self, output_dir='Models'):
         """
         Save evaluation metrics to CSV file.
         """
@@ -310,13 +292,15 @@ class ModelTrainer:
                     f.write("\n")
             print(f"Best hyperparameters saved: {params_path}")
     
-    def run_training_pipeline(self, X, y, feature_names, output_dir='models'):
+    def run_training_pipeline(self, X_train, X_test, y_train, y_test, feature_names, output_dir='Models'):
         """
         Execute complete model training and evaluation pipeline.
         
         Args:
-            X: Feature matrix
-            y: Target variable
+            X_train: Training feature matrix (pre-scaled)
+            X_test: Testing feature matrix (pre-scaled)
+            y_train: Training labels
+            y_test: Testing labels
             feature_names: List of feature column names
             output_dir: Directory to save models and plots
             
@@ -327,14 +311,15 @@ class ModelTrainer:
         print("MODEL TRAINING PIPELINE")
         print("="*70)
         
-        # Prepare train/test split
-        X_train, X_test, y_train, y_test = self.prepare_train_test_split(X, y)
+        print(f"\nTraining set size: {len(X_train):,}")
+        print(f"Testing set size: {len(X_test):,}")
+        print(f"Number of features: {len(feature_names)}")
         
         # Get all model configurations
         model_configs = self.get_model_configs()
         
-        # Create output directories
-        plots_dir = os.path.join(output_dir, 'plots')
+        # Create output directories and clean plots directory
+        plots_dir = os.path.join(output_dir, 'Plots')
         os.makedirs(plots_dir, exist_ok=True)
         
         # Train and evaluate all models
@@ -401,7 +386,7 @@ class ModelTrainer:
                 self.plot_decision_tree(
                     model, feature_names, model_name,
                     output_path=os.path.join(plots_dir, f'{model_name.lower()}_tree.png'),
-                    max_depth=5  # Show only top 5 levels for readability
+                    max_depth=3  # Show only top 3 levels for readability
                 )
         
         # Save models
@@ -433,33 +418,35 @@ if __name__ == "__main__":
     print("STANDALONE MODEL TRAINING")
     print("="*70)
     
-    # Load engineered features
-    input_path = 'SampleData/data.csv.gz'
-    output_dir = 'models'
+    # Load pre-split datasets from feature engineering
+    data_dir = 'SampleData'
+    output_dir = 'Models'
     
-    print(f"\nLoading engineered features from: {input_path}")
-    df = pd.read_csv(input_path, compression='gzip', low_memory=False)
-    print(f"Loaded {len(df):,} rows")
+    print(f"\nLoading pre-split datasets from: {data_dir}")
+    X_train = pd.read_csv(os.path.join(data_dir, 'X_train.csv.gz'), compression='gzip')
+    X_test = pd.read_csv(os.path.join(data_dir, 'X_test.csv.gz'), compression='gzip')
+    y_train = pd.read_csv(os.path.join(data_dir, 'y_train.csv.gz'), compression='gzip')['y_train']
+    y_test = pd.read_csv(os.path.join(data_dir, 'y_test.csv.gz'), compression='gzip')['y_test']
     
-    # Prepare features and target
-    print("\nPreparing features and target variable...")
-    y = df['is_successful']
-    X = df.drop(columns=['is_successful'])
-    feature_names = list(X.columns)
+    # Load feature names
+    with open(os.path.join(data_dir, 'feature_names.pkl'), 'rb') as f:
+        feature_names = pickle.load(f)
     
-    # Handle missing and infinite values
-    X = X.fillna(0)
-    X = X.replace([np.inf, -np.inf], 0)
-    
-    print(f"Feature matrix shape: {X.shape}")
-    print(f"Features used: {feature_names}")
+    print(f"Loaded datasets:")
+    print(f"  X_train shape: {X_train.shape}")
+    print(f"  X_test shape: {X_test.shape}")
+    print(f"  y_train shape: {y_train.shape}")
+    print(f"  y_test shape: {y_test.shape}")
+    print(f"  Number of features: {len(feature_names)}")
     
     # Initialize and run model trainer
-    trainer = ModelTrainer(test_size=0.2, random_state=42)
+    trainer = ModelTrainer(random_state=42, n_jobs=-1)
     
     results = trainer.run_training_pipeline(
-        X=X,
-        y=y,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
         feature_names=feature_names,
         output_dir=output_dir
     )
@@ -471,4 +458,4 @@ if __name__ == "__main__":
     print("="*70)
     print(f"Total elapsed time: {elapsed_time:.2f} seconds")
     print(f"Models saved to: {output_dir}/")
-    print(f"Plots saved to: {output_dir}/plots/")
+    print(f"Plots saved to: {output_dir}/Plots/")

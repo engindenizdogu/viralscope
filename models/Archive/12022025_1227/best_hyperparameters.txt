@@ -3,10 +3,10 @@ Best Hyperparameters from GridSearchCV
 
 RandomForest:
   class_weight: balanced
-  max_depth: 3
+  max_depth: 10
   min_samples_leaf: 5
-  min_samples_split: 5
-  n_estimators: 30
+  min_samples_split: 10
+  n_estimators: 100
 
 DecisionTree:
   criterion: entropy
