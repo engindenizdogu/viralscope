@@ -321,11 +321,11 @@ if __name__ == "__main__":
         'models_output_dir': 'Models',
             
         # Sampling parameters
-        'random_sampling_ratio': 0.025,  # 2.5% of 85M
+        'random_sampling_ratio': 0.1,  # 10% of 85M
         'random_sampling_max_lines': None,
         'random_sampling_min_views_per_day': 10000,  # Filter low-engagement videos
         'preparation_sample_size': 250_000,  # Downsample after merging if needed
-        'success_percentile': 80,  # Top 20% considered successful (used in model training)
+        'success_percentile': 70,  # Top 30% considered successful (used in model training)
             
         # Model parameters
         'test_size': 0.2,
@@ -333,7 +333,7 @@ if __name__ == "__main__":
             
         # Pipeline control
         'skip_random_sampling': True,  # Set True if random sample exists
-        'skip_data_preparation': False,  # Set True if prepared data exists
+        'skip_data_preparation': True,  # Set True if prepared data exists
         'skip_feature_engineering': False  # Set True if features exist
     }
 
