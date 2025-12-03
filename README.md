@@ -17,10 +17,10 @@ Predictive exploration of YouTube channel & video performance.
 
 **Key Features:**
 - End-to-end ML pipeline from raw data to trained models
-- Stratified sampling to handle class imbalance
-- Feature engineering focused on pre-upload and early signals
-- Multiple classification models (Random Forest, Gradient Boosting)
-- Designed to prevent data leakage by using only features available at/near upload time
+- Random and data preparation sampling with engagement filtering
+- Feature engineering with train/test split and scaling
+- Multiple classification models with hyperparameter tuning
+- Designed to prevent data leakage - labels created only after train/test split
 
 ## Folder Structure
 
@@ -35,8 +35,10 @@ trendy-tube/
 │
 ├── SampleData/                       # Generated sample datasets
 │   ├── random_sample_raw_yt_metadata.csv.gz      # Stage 1 output (~850K videos)
-│   ├── stratified_sample_raw_yt_metadata.csv.gz  # Stage 2 output (100K videos)
-│   ├── data.csv.gz                               # Stage 3 output (engineered features)
+│   ├── prepared_data.csv.gz                      # Stage 2 output (100K videos with engagement)
+│   ├── X_train.csv.gz, X_test.csv.gz             # Stage 3 output (train/test features)
+│   ├── y_train.csv.gz, y_test.csv.gz             # Stage 3 output (train/test labels)
+│   ├── scaler.pkl, feature_names.pkl             # Stage 3 output (preprocessing artifacts)
 │   └── Archive/                                  # Previous sampling experiments
 │
 ├── Preprocessing/                    # Jupyter notebooks for data exploration
@@ -49,15 +51,16 @@ trendy-tube/
 │   ├── YouNiverse Large-Scale Channel and Video Metadata.pdf
 │   └── target_dist_stratified.png    # Generated: target distribution plot
 │
-├── models/                           # Saved trained models (generated)
-│   ├── random_forest.pkl
-│   ├── gradient_boosting.pkl
-│   └── scaler.pkl
+├── Models/                           # Saved trained models (generated)
+│   ├── best_hyperparameters.txt      # Best hyperparameters for each model
+│   ├── evaluation_metrics.csv        # Model performance metrics
+│   ├── Plots/                        # Model evaluation plots
+│   └── Archive/                      # Previous model runs
 │
 ├── pipeline.py                       # Main orchestration script
 ├── random_sampling.py                # Stage 1: Random sampling from compressed data
-├── stratified_sampling.py            # Stage 2: Stratified sampling by engagement
-├── feature_engineering.py            # Stage 3: Feature extraction and engineering
+├── data_preparation.py               # Stage 2: Data preparation and engagement calculation
+├── feature_engineering.py            # Stage 3: Feature extraction and train/test split
 ├── model_training.py                 # Stage 4: Model training and evaluation
 ├── requirements.txt                  # Python dependencies
 └── README.md                         # This file
@@ -77,18 +80,19 @@ trendy-tube/
 
 **Stages:**
 1. Random sampling from compressed metadata
-2. Stratified sampling based on engagement metrics
-3. Feature engineering from video/channel characteristics
-4. Model training and evaluation
+2. Data preparation: Merge sources and calculate engagement metrics
+3. Feature engineering and train/test split with scaling
+4. Model training with label creation and hyperparameter tuning
 
 **Configuration Options:**
 ```python
 config = {
-    'random_sampling_ratio': 0.01,      # 1% of 85M videos
-    'stratified_sample_size': 100_000,  # Final sample size
-    'success_percentile': 90,           # Top 10% = successful
-    'test_size': 0.2,                   # 80/20 train/test split
-    'random_state': 42,                 # Reproducibility seed
+    'random_sampling_ratio': 0.01,          # 1% of 85M videos
+    'random_sampling_min_views_per_day': 10,  # Filter low-engagement videos
+    'preparation_sample_size': 100_000,     # Downsample if needed
+    'success_percentile': 90,               # Top 10% = successful (for labels)
+    'test_size': 0.2,                       # 80/20 train/test split
+    'random_state': 42,                     # Reproducibility seed
 }
 ```
 
@@ -111,41 +115,44 @@ config = {
 - `sample_rows()`: Perform Bernoulli sampling
 - `run_sampling()`: Execute complete sampling workflow
 
-### `stratified_sampling.py` - Stage 2: Stratified Sampling
+### `data_preparation.py` - Stage 2: Data Preparation
 
-**Purpose:** Creates a balanced dataset by stratifying on video success (engagement-based).
-
-**Target Definition:**
-```
-is_successful = 1 if video is in top 10% by engagement_rate
-engagement_rate = (like_rate - 0.5 * dislike_rate) / days_since_upload
-```
+**Purpose:** Merges data sources and calculates engagement metrics. Does NOT create labels to prevent data leakage.
 
 **Key Features:**
-- Joins metadata with channel statistics and comment counts
-- Calculates time-normalized engagement metrics
-- Stratified sampling ensures balanced class distribution (50/50 successful/unsuccessful)
-- Generates distribution visualization
+- Joins metadata with channels, timeseries, and comment counts
+- Calculates time-normalized engagement metrics (`engagement_per_day`)
+- Optional random downsampling to target size
+- Saves prepared data for feature engineering
+
+**Engagement Metric:**
+```
+engagement_per_day = (
+    (avg_rating * view_count) + 
+    (like_count - dislike_count) + 
+    comment_count
+) / days_since_upload
+```
 
 **Important Notes:**
+- NO label creation at this stage (labels created in model training)
+- Preserves all engagement data for later use
 - Variable observation windows (different crawl dates)
-- Survivor bias (only crawled videos included)
-- Not predictive at a fixed time point (e.g., day 7 performance)
 
-**Class:** `StratifiedSampler`
+**Class:** `DataPreparation`
 - `calculate_time_normalized_engagement()`: Compute engagement scores
-- `create_target_variable()`: Define binary success target
-- `stratified_sample()`: Perform stratified split
-- `run_sampling_pipeline()`: Execute complete workflow
+- `merge_data_sources()`: Join all data sources
+- `run_preparation_pipeline()`: Execute complete workflow
 
-### `feature_engineering.py` - Stage 3: Feature Engineering
+### `feature_engineering.py` - Stage 3: Feature Engineering & Train/Test Split
 
-**Purpose:** Extracts predictive features while preventing data leakage.
+**Purpose:** Extracts predictive features, creates train/test split, and applies scaling.
 
-**Data Leakage Prevention:**
-- Only uses features available at upload time or shortly after
-- Avoids engagement metrics (views, likes, comments) that contain target information
-- Features are pre-upload (channel stats, metadata) or early signals only
+**Key Changes:**
+- Creates train/test split BEFORE label creation (in model training)
+- Scales features using StandardScaler (fitted on training data only)
+- Saves scaled datasets and preprocessing artifacts
+- No label creation at this stage
 
 **Feature Categories:**
 
@@ -175,18 +182,20 @@ engagement_rate = (like_rate - 0.5 * dislike_rate) / days_since_upload
 
 ### `model_training.py` - Stage 4: Model Training & Evaluation
 
-**Purpose:** Trains classification models and evaluates their performance.
+**Purpose:** Creates labels from training data only, trains models with hyperparameter tuning.
 
-**Models:**
+**Label Creation (Prevents Data Leakage):**
+- Labels created AFTER train/test split
+- Success threshold calculated from training data's engagement_per_day percentile
+- Same threshold applied to test data
+- Ensures no information leakage from test set
+
+**Models with GridSearchCV:**
 1. **Random Forest Classifier**
-   - 100 trees
-   - Max depth: 20
-   - Min samples split: 10
-   
-2. **Gradient Boosting Classifier**
-   - 100 estimators
-   - Learning rate: 0.1
-   - Max depth: 5
+2. **Decision Tree Classifier**
+3. **Linear SVC**
+4. **K-Nearest Neighbors**
+5. **Multi-Layer Perceptron**
 
 **Evaluation Metrics:**
 - Classification report (precision, recall, F1-score)
@@ -202,10 +211,10 @@ engagement_rate = (like_rate - 0.5 * dislike_rate) / days_since_upload
 - Classification reports (console)
 
 **Class:** `ModelTrainer`
-- `prepare_train_test_split()`: Split and scale features
-- `train_random_forest()`: Train RF classifier
-- `train_gradient_boosting()`: Train GB classifier
+- `get_model_configs()`: Define models and hyperparameter grids
+- `train_model_with_tuning()`: Train with GridSearchCV
 - `evaluate_model()`: Calculate metrics, generate plots
+- `plot_feature_importance()`: Visualize top features
 - `run_training_pipeline()`: Train all models, save outputs
 
 ## Installation
@@ -245,11 +254,11 @@ python pipeline.py
 ```
 
 This will:
-1. Sample 1% of 85M videos (~850K) from compressed metadata
-2. Create a balanced stratified sample of 100K videos
-3. Engineer features from metadata and channel info
-4. Train Random Forest and Gradient Boosting models
-5. Save models and evaluation plots
+1. Sample videos from compressed metadata with view threshold filtering
+2. Merge data sources and calculate engagement metrics
+3. Engineer features, create train/test split, and apply scaling
+4. Create labels from training data and train multiple models with hyperparameter tuning
+5. Save models, best hyperparameters, and evaluation plots
 
 **Expected Runtime:** ~30-60 minutes (depending on hardware)
 
@@ -266,17 +275,17 @@ sample_df = sampler.run_sampling(
 )
 ```
 
-**Stage 2: Stratified Sampling**
+**Stage 2: Data Preparation**
 ```python
-from stratified_sampling import StratifiedSampler
+from data_preparation import DataPreparation
 
-sampler = StratifiedSampler(target_sample_size=100_000, random_state=42)
-stratified_df = sampler.run_sampling_pipeline(
+prep = DataPreparation(target_sample_size=100_000, random_state=42)
+prepared_df = prep.run_preparation_pipeline(
     metadata_path='SampleData/random_sample_raw_yt_metadata.csv.gz',
     channels_path='RawData/_raw_df_channels.tsv.gz',
-    comments_count_path='RawData/num_comments.tsv.gz',
-    output_csv_path='SampleData/stratified_sample_raw_yt_metadata.csv.gz',
-    output_plot_path='Docs/target_dist_stratified.png'
+    timeseries_path='RawData/_raw_df_timeseries.tsv.gz',
+    comments_path='RawData/num_comments.tsv.gz',
+    output_csv_path='SampleData/prepared_data.csv.gz'
 )
 ```
 
@@ -284,23 +293,30 @@ stratified_df = sampler.run_sampling_pipeline(
 ```python
 from feature_engineering import FeatureEngineer
 
-engineer = FeatureEngineer(random_state=42)
-features_df, X, y, feature_names = engineer.run_feature_engineering_pipeline(
-    input_path='SampleData/stratified_sample_raw_yt_metadata.csv.gz',
-    output_path='SampleData/data.csv.gz'
+engineer = FeatureEngineer(
+    test_size=0.2,
+    random_state=42,
+    success_percentile=90
 )
+result = engineer.run_feature_engineering_pipeline(
+    input_path='SampleData/prepared_data.csv.gz',
+    output_dir='SampleData'
+)
+# Returns: X_train, X_test, y_train, y_test, feature_names
 ```
 
 **Stage 4: Model Training**
 ```python
 from model_training import ModelTrainer
 
-trainer = ModelTrainer(test_size=0.2, random_state=42)
+trainer = ModelTrainer(random_state=42, n_jobs=-1)
 results = trainer.run_training_pipeline(
-    X=X,
-    y=y,
+    X_train=X_train,
+    X_test=X_test,
+    y_train=y_train,
+    y_test=y_test,
     feature_names=feature_names,
-    output_dir='models'
+    output_dir='Models'
 )
 ```
 
@@ -313,7 +329,7 @@ from pipeline import TrendyTubePipeline
 
 config = {
     'skip_random_sampling': True,       # Reuse existing random sample
-    'skip_stratified_sampling': True,   # Reuse existing stratified sample
+    'skip_data_preparation': True,      # Reuse existing prepared data
     'skip_feature_engineering': False,  # Re-run feature engineering
 }
 
@@ -328,28 +344,31 @@ results = pipeline.run_full_pipeline()
 │ STAGE 1: Random Sampling (random_sampling.py)                   │
 │ Input:  _raw_yt_metadata.jsonl.zst (14.7 GB, 85M videos)        │
 │ Output: random_sample_raw_yt_metadata.csv.gz (~850K videos)     │
-│ Method: Bernoulli sampling with ratio=0.01                      │
+│ Method: Bernoulli sampling with view threshold filtering        │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│ STAGE 2: Stratified Sampling (stratified_sampling.py)           │
-│ Input:  Random sample + channels + comment counts               │
-│ Output: stratified_sample_raw_yt_metadata.csv.gz (100K videos)  │
-│ Method: Engagement-based target, stratified split 50/50         │
+│ STAGE 2: Data Preparation (data_preparation.py)                 │
+│ Input:  Random sample + channels + timeseries + comments        │
+│ Output: prepared_data.csv.gz (100K videos with engagement)      │
+│ Method: Merge sources, calculate engagement_per_day metric      │
+│ Note:   NO LABEL CREATION - prevents data leakage               │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │ STAGE 3: Feature Engineering (feature_engineering.py)           │
-│ Input:  Stratified sample (100K videos)                         │
-│ Output: data.csv.gz (100K videos × ~50 features)                │
-│ Method: Extract metadata, temporal, channel features            │
+│ Input:  Prepared data (100K videos)                             │
+│ Output: X_train, X_test, y_train, y_test (scaled)               │
+│ Method: Extract features, train/test split, StandardScaler      │
+│ Note:   Split BEFORE label creation in next stage               │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │ STAGE 4: Model Training (model_training.py)                     │
-│ Input:  Engineered features (X) and target (y)                  │
+│ Input:  Pre-split datasets with engagement_per_day              │
 │ Output: Trained models, evaluation metrics, plots               │
-│ Models: Random Forest, Gradient Boosting                        │
+│ Method: Create labels from TRAINING data percentile only        │
+│ Models: RF, DecisionTree, LinearSVC, KNN, MLP (w/ GridSearch)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -372,8 +391,8 @@ results = pipeline.run_full_pipeline()
 - [x] Create a sample dataset
 - [x] Create the preprocessing pipeline
 - [x] Feature engineering
-  - [ ] One hot encoding
-  - [ ] Scaling
+  - [x] One hot encoding
+  - [x] Scaling
   - [x] Feature engineering/extraction/selection
 - [x] Model training
   - [x] Random Forest Model
@@ -381,7 +400,7 @@ results = pipeline.run_full_pipeline()
 - [ ] Model Evaluation improvements
   - [ ] Cross-validation
   - [ ] Hyperparameter tuning
-  - [ ] Additional models (XGBoost, Neural Networks)
+  - [x] Additional models (XGBoost, Neural Networks)
 - [ ] Look for additional scraping solutions for more recent data (Optional)
 - [ ] Agentic Architecture
 - [ ] Frontend
