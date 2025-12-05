@@ -198,11 +198,11 @@ class RandomSampler:
 if __name__ == "__main__":
     # Initialize sampler
     sampler = RandomSampler(
-        ratio=0.025,
+        ratio=0.01,
         max_lines=None,
         log_every=1_000_000,
         random_state=42,
-        min_views_per_day=10000  # Filter videos with < 10000 views per day
+        min_views_per_day=-1  # Filter videos with < 10000 views per day, set -1 to disable
     )
     
     # Run sampling

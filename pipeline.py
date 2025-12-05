@@ -248,6 +248,49 @@ class TrendyTubePipeline:
         print(f"\n✓ Stage 4 completed: Models trained and saved to {self.config['models_output_dir']}")
         return training_results
     
+    def save_config_to_metrics(self):
+        """
+        Append configuration parameters to evaluation_metrics.csv
+        """
+        metrics_path = os.path.join(self.config['models_output_dir'], 'evaluation_metrics.csv')
+        
+        if not os.path.exists(metrics_path):
+            print(f"Warning: {metrics_path} not found, skipping config save")
+            return
+        
+        # Read existing metrics
+        df = pd.read_csv(metrics_path)
+        
+        # Create config dataframe
+        config_data = {
+            'parameter': [
+                'random_sampling_ratio',
+                'random_sampling_max_lines',
+                'random_sampling_min_views_per_day',
+                'preparation_sample_size',
+                'success_percentile',
+                'test_size',
+                'random_state'
+            ],
+            'value': [
+                self.config['random_sampling_ratio'],
+                self.config['random_sampling_max_lines'],
+                self.config['random_sampling_min_views_per_day'],
+                self.config['preparation_sample_size'],
+                self.config['success_percentile'],
+                self.config['test_size'],
+                self.config['random_state']
+            ]
+        }
+        
+        # Write back with config section
+        with open(metrics_path, 'w', newline='') as f:
+            df.to_csv(f, index=False)
+            f.write('\nConfiguration Parameters\n')
+            pd.DataFrame(config_data).to_csv(f, index=False)
+        
+        print(f"Configuration parameters saved to {metrics_path}")
+    
     def run_full_pipeline(self):
         """
         Execute complete end-to-end pipeline.
@@ -275,6 +318,9 @@ class TrendyTubePipeline:
             
             # Stage 4: Model Training
             self.stage4_model_training()
+            
+            # Save configuration to evaluation metrics CSV
+            self.save_config_to_metrics()
             
             # Pipeline completion
             duration = time.time() - self.start_time
@@ -323,17 +369,17 @@ if __name__ == "__main__":
         # Sampling parameters
         'random_sampling_ratio': 0.1,  # 10% of 85M
         'random_sampling_max_lines': None,
-        'random_sampling_min_views_per_day': 10000,  # Filter low-engagement videos
+        'random_sampling_min_views_per_day': 10000,  # Filter low-engagement videos, set -1 to disable
         'preparation_sample_size': 250_000,  # Downsample after merging if needed
-        'success_percentile': 70,  # Top 30% considered successful (used in model training)
+        'success_percentile': 70,  # Top 50% considered successful (used in model training)
             
         # Model parameters
         'test_size': 0.2,
         'random_state': 42,
-            
+
         # Pipeline control
         'skip_random_sampling': True,  # Set True if random sample exists
-        'skip_data_preparation': True,  # Set True if prepared data exists
+        'skip_data_preparation': False,  # Set True if prepared data exists
         'skip_feature_engineering': False  # Set True if features exist
     }
 

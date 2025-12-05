@@ -187,9 +187,8 @@ class ModelTrainer:
         indices = np.argsort(importances)[::-1][:actual_top_n]
         
         plt.figure(figsize=(12, 8))
-        plt.title(f'Top {actual_top_n} Feature Importances - {model_name}', 
-                  fontsize=14, fontweight='bold')
-        plt.bar(range(len(indices)), importances[indices], color='steelblue')
+        plt.title(f'Top {actual_top_n} Features - {model_name}', fontsize=14, fontweight='bold')
+        plt.bar(range(len(indices)), importances[indices], color='mediumseagreen', edgecolor='black', align='center')
         
         # Get feature names using the indices
         feature_labels = [feature_names[i] if i < len(feature_names) else f'Feature_{i}' for i in indices]
