@@ -53,9 +53,9 @@ class ModelTrainer:
                     n_jobs=self.n_jobs
                 ),
                 {
-                    'n_estimators': [100, 200, 300],
-                    'max_depth': [10, 20, 30],
-                    'min_samples_leaf': [1, 3, 5],
+                    'n_estimators': [200, 300],
+                    'max_depth': [10, 20],
+                    'min_samples_leaf': [1, 3],
                     'class_weight': ['balanced', None]
                 }
             ),
@@ -64,8 +64,8 @@ class ModelTrainer:
                     random_state=self.random_state
                 ),
                 {
-                    'max_depth': [5, 10, 20],
-                    'min_samples_leaf': [1, 3, 5],
+                    'max_depth': [10, 20],
+                    'min_samples_leaf': [3, 5],
                     'criterion': ['gini', 'entropy'],
                     'class_weight': ['balanced', None]
                 }
@@ -75,9 +75,9 @@ class ModelTrainer:
                     random_state=self.random_state
                 ),
                 {
-                    'C': [0.01, 0.1, 0.5],
+                    'C': [0.01, 0.1],
                     'class_weight': ['balanced', None],
-                    'max_iter': [1000, 2000, 3000]
+                    'max_iter': [1000, 2000]
                 }
             ),
             "KNN": (
@@ -86,9 +86,9 @@ class ModelTrainer:
                     n_jobs=self.n_jobs
                 ),
                 {
-                    'n_neighbors': [3, 5, 7, 9],
+                    'n_neighbors': [7, 9],
                     #'weights': ['uniform', 'distance'],
-                    'p': [2, 3]
+                    'p': [2]
                 }
             ),
             "MLP": (
@@ -100,8 +100,8 @@ class ModelTrainer:
                 {
                     'hidden_layer_sizes': [(128, 64), (256, 128, 32)],
                     'learning_rate_init': [0.02, 0.05],
-                    'activation': ['relu', 'tanh', 'logistic'],
-                    'max_iter': [100, 200, 300]
+                    'activation': ['relu', 'logistic'],
+                    'max_iter': [100, 200]
                 }
             )
         }

@@ -4,14 +4,14 @@ Best Hyperparameters from GridSearchCV
 RandomForest:
   class_weight: None
   max_depth: 10
-  min_samples_leaf: 5
-  n_estimators: 300
+  min_samples_leaf: 3
+  n_estimators: 200
 
 DecisionTree:
   class_weight: None
-  criterion: entropy
-  max_depth: 5
-  min_samples_leaf: 1
+  criterion: gini
+  max_depth: 10
+  min_samples_leaf: 5
 
 LinearSVC:
   C: 0.01

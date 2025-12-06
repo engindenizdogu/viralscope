@@ -345,21 +345,27 @@ class FeatureEngineer:
         
         print(f"Feature distributions plot saved: {output_path}")
     
-    def plot_correlation_heatmap(self, X_train, output_path='Docs/correlation_heatmap.png'):
+    def plot_correlation_heatmap(self, X_train, y_train=None, output_path='Docs/correlation_heatmap.png'):
         """
         Create a correlation heatmap for X_train features.
         
         Args:
             X_train: Training feature matrix (DataFrame)
+            y_train: Training labels (optional, to show correlation with target)
             output_path: Path to save the plot
         """
         # Create output directory if it doesn't exist
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
-        print(f"\nCalculating correlation matrix for {len(X_train.columns)} features...")
-        
-        # Calculate correlation matrix
-        corr_matrix = X_train.corr()
+        # If y_train is provided, add it to the dataframe for correlation analysis
+        if y_train is not None:
+            X_with_target = X_train.copy()
+            X_with_target['target'] = y_train
+            print(f"\nCalculating correlation matrix for {len(X_train.columns)} features + target...")
+            corr_matrix = X_with_target.corr()
+        else:
+            print(f"\nCalculating correlation matrix for {len(X_train.columns)} features...")
+            corr_matrix = X_train.corr()
         
         # Determine figure size based on number of features
         n_features = len(X_train.columns)
@@ -521,6 +527,19 @@ class FeatureEngineer:
         # Run the pipeline at least once to generate plots and inspect features before finalizing, then adjust this part as needed
         # Remove highly correlated features and apply log transform to skewed features if needed
         
+        additional_drops = ['channel_views', 'avg_subs_per_video', 'title_length', 'description_length', 'duration_minutes',
+                            'is_long_video', 'subscriber_to_video_ratio', 'has_description', 'channel_subscribers', 'channel_total_videos']
+        features_df.drop(columns=additional_drops, inplace=True)
+
+        features_df['avg_views_per_video'] = np.log1p(features_df['avg_views_per_video'])
+        features_df['description_word_count'] = np.log1p(features_df['description_word_count'])
+        #features_df['channel_subscribers'] = np.log1p(features_df['channel_subscribers'])
+        #features_df['channel_total_videos'] = np.log1p(features_df['channel_total_videos'])
+
+        features_df = features_df[(features_df['category_cc'] != 'Nonprofits & Activism')
+                                    & (features_df['category_cc'] != 'Travel & Events')]
+        
+
         # Prepare features and engagement scores
         print("\nPreparing features and engagement scores...")
         engagement_per_day = features_df['engagement_per_day']
@@ -540,7 +559,7 @@ class FeatureEngineer:
         self.plot_feature_distributions(X_train, output_path='Docs/feature_distributions.png')
         
         # Plot correlation heatmap
-        self.plot_correlation_heatmap(X_train, output_path='Docs/correlation_heatmap.png')
+        self.plot_correlation_heatmap(X_train, y_train, output_path='Docs/correlation_heatmap.png')
         
         # Save all 4 datasets
         os.makedirs(output_dir, exist_ok=True)
@@ -616,7 +635,7 @@ if __name__ == "__main__":
     engineer = FeatureEngineer(
         test_size=0.2,
         random_state=42,
-        success_percentile=80
+        success_percentile=50
     )
     
     # Run feature engineering pipeline
