@@ -87,134 +87,184 @@ trendy-tube/
 **Configuration Options:**
 ```python
 config = {
-    'random_sampling_ratio': 0.01,          # 1% of 85M videos
-    'random_sampling_min_views_per_day': 10,  # Filter low-engagement videos
-    'preparation_sample_size': 100_000,     # Downsample if needed
-    'success_percentile': 90,               # Top 10% = successful (for labels)
-    'test_size': 0.2,                       # 80/20 train/test split
-    'random_state': 42,                     # Reproducibility seed
+    'random_sampling_ratio': 0.1,                # 10% of 85M videos
+    'random_sampling_min_views_per_day': 10000,  # Filter low-engagement videos
+    'preparation_sample_size': 100_000,          # Downsample if needed
+    'success_percentile': 90,                    # Top 10% = successful (for labels)
+    'test_size': 0.2,                            # 80/20 train/test split
+    'random_state': 42,                          # Reproducibility seed
 }
 ```
 
 ### `random_sampling.py` - Stage 1: Random Sampling
 
-**Purpose:** Samples from the massive 14.7 GB compressed JSONL file using Bernoulli sampling.
+**Purpose:** Samples from the massive 14.7 GB compressed JSONL file using Bernoulli sampling with engagement-based filtering.
 
 **Key Features:**
 - Memory-efficient streaming from Zstandard-compressed files
-- Two-pass approach: count rows, then sample
+- Two-pass approach: count rows (hardcoded to 85M), then sample
 - Early stopping when target sample size is reached
+- **NEW:** Filters videos with minimum views per day threshold (default: 10 views/day)
 - Handles 85+ million records without loading into memory
 
 **Algorithm:**
 - Bernoulli sampling: Each row independently selected with probability `ratio`
-- Expected output: ~850K videos (1% of 85M)
+- Engagement filtering: Calculates `views_per_day = view_count / days_since_upload`
+- Excludes videos with invalid dates or below engagement threshold
+- Expected output: ~850K videos (1% of 85M) after filtering
 
 **Class:** `RandomSampler`
-- `count_rows()`: Count total lines in compressed file
-- `sample_rows()`: Perform Bernoulli sampling
+- `count_rows()`: Returns hardcoded total (85M) to skip counting pass
+- `sample_rows()`: Perform Bernoulli sampling with engagement filtering
 - `run_sampling()`: Execute complete sampling workflow
+
+**Configuration:**
+- `min_views_per_day`: Threshold to filter low-engagement videos (set to -1 to disable)
+- `ratio`: Sampling ratio (default: 0.001 = 0.1%)
+- `max_lines`: Optional cap on lines to read
 
 ### `data_preparation.py` - Stage 2: Data Preparation
 
-**Purpose:** Merges data sources and calculates engagement metrics. Does NOT create labels to prevent data leakage.
+**Purpose:** Merges data sources and prepares dataset for feature engineering. Does NOT create labels or engagement metrics to prevent data leakage.
 
 **Key Features:**
 - Joins metadata with channels, timeseries, and comment counts
-- Calculates time-normalized engagement metrics (`engagement_per_day`)
+- **NEW:** Calculates channel-level engagement features (`avg_views_per_video`, `avg_subs_per_video`)
+- Processes timeseries data to extract latest channel view counts
+- Drops rows with missing channel/category information
 - Optional random downsampling to target size
-- Saves prepared data for feature engineering
 
-**Engagement Metric:**
-```
-engagement_per_day = (
-    (avg_rating * view_count) + 
-    (like_count - dislike_count) + 
-    comment_count
-) / days_since_upload
-```
+**Data Merging:**
+1. Merge metadata with comment counts (left join on `display_id`)
+2. Merge with channel data (left join on `channel_id`)
+3. Extract latest channel views from timeseries data
+4. Calculate channel-level features
 
 **Important Notes:**
-- NO label creation at this stage (labels created in model training)
-- Preserves all engagement data for later use
-- Variable observation windows (different crawl dates)
+- NO engagement calculation at this stage (moved to feature engineering)
+- NO label creation (labels created in feature engineering after split)
+- Preserves all raw data for later use
 
 **Class:** `DataPreparation`
-- `calculate_time_normalized_engagement()`: Compute engagement scores
-- `merge_data_sources()`: Join all data sources
+- `merge_data_sources()`: Join all data sources with channel metrics
 - `run_preparation_pipeline()`: Execute complete workflow
 
 ### `feature_engineering.py` - Stage 3: Feature Engineering & Train/Test Split
 
-**Purpose:** Extracts predictive features, creates train/test split, and applies scaling.
+**Purpose:** Calculates engagement metrics, extracts predictive features, creates train/test split with proper label creation, and applies scaling.
 
 **Key Changes:**
-- Creates train/test split BEFORE label creation (in model training)
+- **NEW:** Engagement calculation moved here from data preparation
+- Creates train/test split BEFORE label creation to prevent leakage
+- **NEW:** Labels created from TRAINING data percentile only
 - Scales features using StandardScaler (fitted on training data only)
-- Saves scaled datasets and preprocessing artifacts
-- No label creation at this stage
+- **NEW:** One-hot encoding done AFTER split (within `prepare_train_test_split()`)
+- Saves scaled datasets, preprocessing artifacts, and visualization plots
+
+**Engagement Metric:**
+```python
+# Calculate engagement rates
+like_rate = like_count / view_count
+dislike_rate = dislike_count / view_count
+comment_rate = num_comms / view_count
+
+# Weighted engagement score
+engagement_raw = like_rate - (0.5 * dislike_rate) + comment_rate
+
+# Time normalization
+engagement_per_day = engagement_raw / days_since_upload
+```
 
 **Feature Categories:**
 
 1. **Video Metadata Features:**
    - Title: length, word count, questions, exclamations, uppercase ratio
-   - Description: length, word count, presence
+   - Description: length (log-transformed), word count (log-transformed), presence
    - Tags: count
-   - Duration: seconds, categorical bins
+   - Duration: categorical bins (short/long video flags)
 
 2. **Temporal Features:**
-   - Upload: day of week, hour, month, year, is weekend
-   - Time since channel creation
+   - Upload: day of week (one-hot encoded)
+   - Filters: Removes videos uploaded before crawl or same-day
 
 3. **Channel Features:**
-   - Subscriber bins, view bins
-   - Channel age
-   - Join year/month
+   - Average views per video (log-transformed)
+   - Subscriber to video ratio
+   - **Removed:** Raw subscriber/view counts (replaced with derived features)
 
 4. **Categorical Encodings:**
-   - Category ID (one-hot encoding)
-   - License type
+   - Category (one-hot encoding, excludes low-frequency categories)
+   - Day of week (one-hot encoding)
+
+**Data Leakage Prevention:**
+1. Split data with stratification on engagement scores
+2. Calculate success threshold from TRAINING data percentile only
+3. Apply same threshold to test data
+4. One-hot encode categorical features separately for train/test
+5. Fit scaler on training data, transform test data
+
+**Visualization Outputs:**
+- Target distribution plot (train vs test class balance)
+- Feature distributions (histograms/bar charts for all features)
+- Correlation heatmap (with highly correlated pairs identified)
 
 **Class:** `FeatureEngineer`
+- `calculate_time_normalized_engagement()`: Compute engagement scores with time normalization
+- `prepare_train_test_split()`: Split, create labels from training quantile, one-hot encode, scale
 - `engineer_features()`: Create all feature columns
-- `prepare_features_and_target()`: Split X/y, drop leaky columns
+- `plot_feature_distributions()`: Visualize feature distributions
+- `plot_correlation_heatmap()`: Show feature correlations
+- `plot_target_distribution()`: Show class balance
 - `run_feature_engineering_pipeline()`: Complete workflow with save
 
 ### `model_training.py` - Stage 4: Model Training & Evaluation
 
-**Purpose:** Creates labels from training data only, trains models with hyperparameter tuning.
+**Purpose:** Trains multiple classification models with hyperparameter tuning using pre-split and pre-labeled data.
 
-**Label Creation (Prevents Data Leakage):**
-- Labels created AFTER train/test split
-- Success threshold calculated from training data's engagement_per_day percentile
-- Same threshold applied to test data
-- Ensures no information leakage from test set
+**Key Changes:**
+- **UPDATED:** Label creation moved to feature engineering stage
+- Loads pre-split datasets (X_train, X_test, y_train, y_test)
+- Uses pre-fitted scaler and pre-created labels
+- Focus on model training and hyperparameter optimization
 
 **Models with GridSearchCV:**
-1. **Random Forest Classifier**
-2. **Decision Tree Classifier**
-3. **Linear SVC**
-4. **K-Nearest Neighbors**
-5. **Multi-Layer Perceptron**
+1. **Random Forest Classifier** (n_estimators, max_depth, min_samples_leaf, class_weight)
+2. **Decision Tree Classifier** (max_depth, min_samples_leaf, criterion, class_weight)
+3. **Linear SVC** (C, class_weight, max_iter)
+4. **K-Nearest Neighbors** (n_neighbors, p)
+5. **Multi-Layer Perceptron** (hidden_layer_sizes, learning_rate_init, activation, max_iter)
+
+**Hyperparameter Tuning:**
+- Uses 5-fold cross-validation
+- Optimizes for precision score
+- Stores best parameters for each model
+- Reports best CV scores
 
 **Evaluation Metrics:**
-- Classification report (precision, recall, F1-score)
-- ROC-AUC score
+- Accuracy, Precision, Recall, F1-score
+- ROC-AUC score (when available)
+- Classification report (per-class metrics)
 - Confusion matrix
-- Feature importance analysis
-- Top 20 most important features
 
-**Outputs:**
-- Trained model pickles (`models/`)
-- Feature scaler (`models/scaler.pkl`)
-- Feature importance plots (`Docs/`)
-- Classification reports (console)
+**Visualization Outputs:**
+- Confusion matrix heatmap for each model
+- Feature importance plots (tree-based models)
+- Decision tree visualization (DecisionTree model, max_depth=3 shown)
+
+**Saved Artifacts:**
+- Trained model pickles (`Models/*.pkl`)
+- Best hyperparameters (`Models/best_hyperparameters.txt`)
+- Evaluation metrics CSV (`Models/evaluation_metrics.csv`)
+- Plots directory (`Models/Plots/`)
 
 **Class:** `ModelTrainer`
 - `get_model_configs()`: Define models and hyperparameter grids
-- `train_model_with_tuning()`: Train with GridSearchCV
-- `evaluate_model()`: Calculate metrics, generate plots
-- `plot_feature_importance()`: Visualize top features
+- `evaluate_model()`: Calculate metrics, print reports
+- `plot_feature_importance()`: Visualize top N features
+- `plot_decision_tree()`: Visualize decision tree structure
+- `plot_confusion_matrix()`: Create confusion matrix heatmap
+- `save_models()`: Pickle trained models
+- `save_evaluation_metrics()`: Export metrics and best params
 - `run_training_pipeline()`: Train all models, save outputs
 
 ## Installation
