@@ -526,7 +526,6 @@ class FeatureEngineer:
         # Final preparations, part below is decided after looking at feature distributions and correlations
         # Run the pipeline at least once to generate plots and inspect features before finalizing, then adjust this part as needed
         # Remove highly correlated features and apply log transform to skewed features if needed
-        
         additional_drops = ['channel_views', 'avg_subs_per_video', 'title_length', 'description_length', 'duration_minutes',
                             'is_long_video', 'subscriber_to_video_ratio', 'has_description', 'channel_subscribers', 'channel_total_videos']
         features_df.drop(columns=additional_drops, inplace=True)
@@ -539,6 +538,9 @@ class FeatureEngineer:
         features_df = features_df[(features_df['category_cc'] != 'Nonprofits & Activism')
                                     & (features_df['category_cc'] != 'Travel & Events')]
         
+        # Remove channel related features
+        channel_related = ['avg_views_per_video']        
+        features_df.drop(columns=channel_related, inplace=True)
 
         # Prepare features and engagement scores
         print("\nPreparing features and engagement scores...")
