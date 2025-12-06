@@ -146,22 +146,22 @@ class FeatureEngineer:
             X_test = X_test[X_train.columns]
         
         # Category one-hot encoding
-        if 'categories' in X_train.columns:
+        if 'category_cc' in X_train.columns:
             print("One-hot encoding categories...")
             # Fill missing values with 'Unknown'
-            X_train['categories'] = X_train['categories'].fillna('Unknown')
-            X_test['categories'] = X_test['categories'].fillna('Unknown')
+            X_train['category_cc'] = X_train['category_cc'].fillna('Unknown')
+            X_test['category_cc'] = X_test['category_cc'].fillna('Unknown')
             
             # Get all possible categories from training data
-            train_categories = X_train['categories'].unique()
+            train_categories = X_train['category_cc'].unique()
             
             # One-hot encode training data
-            category_dummies_train = pd.get_dummies(X_train['categories'], prefix='category')
-            X_train = pd.concat([X_train.drop(columns=['categories']), category_dummies_train], axis=1)
+            category_dummies_train = pd.get_dummies(X_train['category_cc'], prefix='category')
+            X_train = pd.concat([X_train.drop(columns=['category_cc']), category_dummies_train], axis=1)
             
             # One-hot encode test data
-            category_dummies_test = pd.get_dummies(X_test['categories'], prefix='category')
-            X_test = pd.concat([X_test.drop(columns=['categories']), category_dummies_test], axis=1)
+            category_dummies_test = pd.get_dummies(X_test['category_cc'], prefix='category')
+            X_test = pd.concat([X_test.drop(columns=['category_cc']), category_dummies_test], axis=1)
             
             # Align test columns with training (add missing, remove extra)
             for col in category_dummies_train.columns:
@@ -278,6 +278,146 @@ class FeatureEngineer:
         
         return features_df
     
+    def plot_feature_distributions(self, X_train, output_path='Docs/feature_distributions.png'):
+        """
+        Plot the distribution of each feature in X_train.
+        
+        Args:
+            X_train: Training feature matrix (DataFrame)
+            output_path: Path to save the plot
+        """
+        # Create output directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Get list of features
+        features = X_train.columns.tolist()
+        n_features = len(features)
+        
+        # Calculate grid size
+        n_cols = 4
+        n_rows = int(np.ceil(n_features / n_cols))
+        
+        # Create figure
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, n_rows * 4))
+        axes = axes.flatten() if n_features > 1 else [axes]
+        
+        print(f"\nPlotting distributions for {n_features} features...")
+        
+        for idx, feature in enumerate(features):
+            ax = axes[idx]
+            
+            # Get feature values
+            values = X_train[feature].values
+            
+            # Check if feature is binary or categorical (one-hot encoded)
+            unique_values = np.unique(values)
+            is_binary_or_categorical = len(unique_values) <= 10 # Arbitrary threshold, watch out for future changes
+            
+            if is_binary_or_categorical:
+                # Bar plot for categorical/binary features
+                value_counts = pd.Series(values).value_counts().sort_index()
+                ax.bar(range(len(value_counts)), value_counts.values, 
+                      color='steelblue', alpha=0.7, edgecolor='black')
+                ax.set_xticks(range(len(value_counts)))
+                ax.set_xticklabels([f'{int(v)}' for v in value_counts.index], rotation=0)
+                ax.set_ylabel('Count', fontsize=10)
+            else:
+                # Histogram for continuous features
+                ax.hist(values, bins=50, color='steelblue', alpha=0.7, edgecolor='black')
+                ax.set_ylabel('Frequency', fontsize=10)
+            
+            # Set title and labels
+            ax.set_title(feature, fontsize=11, fontweight='bold')
+            ax.set_xlabel('Value', fontsize=10)
+            ax.grid(axis='y', alpha=0.3)
+        
+        # Hide unused subplots
+        for idx in range(n_features, len(axes)):
+            axes[idx].axis('off')
+        
+        # Overall title
+        fig.suptitle('Feature Distributions - Training Set', 
+                     fontsize=18, fontweight='bold', y=0.995)
+        
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Feature distributions plot saved: {output_path}")
+    
+    def plot_correlation_heatmap(self, X_train, y_train=None, output_path='Docs/correlation_heatmap.png'):
+        """
+        Create a correlation heatmap for X_train features.
+        
+        Args:
+            X_train: Training feature matrix (DataFrame)
+            y_train: Training labels (optional, to show correlation with target)
+            output_path: Path to save the plot
+        """
+        # Create output directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # If y_train is provided, add it to the dataframe for correlation analysis
+        if y_train is not None:
+            X_with_target = X_train.copy()
+            X_with_target['target'] = y_train
+            print(f"\nCalculating correlation matrix for {len(X_train.columns)} features + target...")
+            corr_matrix = X_with_target.corr()
+        else:
+            print(f"\nCalculating correlation matrix for {len(X_train.columns)} features...")
+            corr_matrix = X_train.corr()
+        
+        # Determine figure size based on number of features
+        n_features = len(X_train.columns)
+        fig_size = max(12, min(n_features * 0.4, 30))
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+        
+        # Create heatmap
+        sns.heatmap(corr_matrix, 
+                   annot=n_features <= 20,  # Only show values if not too many features
+                   fmt='.2f',
+                   cmap='coolwarm',
+                   center=0,
+                   square=True,
+                   linewidths=0.5,
+                   cbar_kws={"shrink": 0.8},
+                   ax=ax,
+                   vmin=-1, vmax=1)
+        
+        # Set title and labels
+        ax.set_title('Feature Correlation Heatmap - Training Set', 
+                    fontsize=16, fontweight='bold', pad=20)
+        
+        # Rotate labels for better readability
+        plt.xticks(rotation=45, ha='right', fontsize=8)
+        plt.yticks(rotation=0, fontsize=8)
+        
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Correlation heatmap saved: {output_path}")
+        
+        # Print highly correlated feature pairs
+        print("\nHighly correlated feature pairs (|correlation| > 0.7):")
+        high_corr_pairs = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                if abs(corr_matrix.iloc[i, j]) > 0.7:
+                    high_corr_pairs.append((
+                        corr_matrix.columns[i],
+                        corr_matrix.columns[j],
+                        corr_matrix.iloc[i, j]
+                    ))
+        
+        if high_corr_pairs:
+            for feat1, feat2, corr_val in sorted(high_corr_pairs, key=lambda x: abs(x[2]), reverse=True):
+                print(f"  {feat1} <-> {feat2}: {corr_val:.3f}")
+        else:
+            print("  No feature pairs with |correlation| > 0.7 found.")
+    
     def plot_target_distribution(self, y_train, y_test, output_path):
         """
         Plot and save the distribution of target labels for train and test sets.
@@ -376,13 +516,30 @@ class FeatureEngineer:
         columns_to_drop = [
             'upload_date', 'upload_date_dt', 'crawl_date', 'crawl_date_dt', 'view_count',
             'like_count', 'dislike_count', 'like_rate', 'dislike_rate', 'engagement_raw',
-            'days_since_upload', 'channel_x', 'channel_y', 'display_id', 'category_cc',
+            'days_since_upload', 'channel_x', 'channel_y', 'display_id', 'categories',
             'join_date', 'name_cc', 'subscriber_rank_sb', 'title', 'description', 'tags',
             'duration', 'channel_id', 'subscribers_cc', 'videos_cc', 'num_comms', 'comment_rate']
         # Keep engagement_per_day for label creation
         # Keep upload_day_of_week and categories for one-hot encoding in prepare_train_test_split
         features_df.drop(columns=columns_to_drop, inplace=True)
+
+        # Final preparations, part below is decided after looking at feature distributions and correlations
+        # Run the pipeline at least once to generate plots and inspect features before finalizing, then adjust this part as needed
+        # Remove highly correlated features and apply log transform to skewed features if needed
         
+        additional_drops = ['channel_views', 'avg_subs_per_video', 'title_length', 'description_length', 'duration_minutes',
+                            'is_long_video', 'subscriber_to_video_ratio', 'has_description', 'channel_subscribers', 'channel_total_videos']
+        features_df.drop(columns=additional_drops, inplace=True)
+
+        features_df['avg_views_per_video'] = np.log1p(features_df['avg_views_per_video'])
+        features_df['description_word_count'] = np.log1p(features_df['description_word_count'])
+        #features_df['channel_subscribers'] = np.log1p(features_df['channel_subscribers'])
+        #features_df['channel_total_videos'] = np.log1p(features_df['channel_total_videos'])
+
+        features_df = features_df[(features_df['category_cc'] != 'Nonprofits & Activism')
+                                    & (features_df['category_cc'] != 'Travel & Events')]
+        
+
         # Prepare features and engagement scores
         print("\nPreparing features and engagement scores...")
         engagement_per_day = features_df['engagement_per_day']
@@ -397,6 +554,12 @@ class FeatureEngineer:
         
         # Plot target distribution
         self.plot_target_distribution(y_train, y_test, output_path=output_path_plot)
+        
+        # Plot feature distributions
+        self.plot_feature_distributions(X_train, output_path='Docs/feature_distributions.png')
+        
+        # Plot correlation heatmap
+        self.plot_correlation_heatmap(X_train, y_train, output_path='Docs/correlation_heatmap.png')
         
         # Save all 4 datasets
         os.makedirs(output_dir, exist_ok=True)
@@ -472,7 +635,7 @@ if __name__ == "__main__":
     engineer = FeatureEngineer(
         test_size=0.2,
         random_state=42,
-        success_percentile=80
+        success_percentile=50
     )
     
     # Run feature engineering pipeline

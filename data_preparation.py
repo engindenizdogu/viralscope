@@ -70,7 +70,7 @@ class DataPreparation:
             left_on='channel_id',
             right_on='channel',
             how='left',
-            suffixes=('', '_channel')
+            #suffixes=('', '_channel')
         )
 
         # Process timeseries to get channel views
@@ -92,6 +92,9 @@ class DataPreparation:
             right_on=['channel'],
             how='left'
         )
+
+        # Drop rows with unmatched channels and categories
+        merged_df.dropna(subset=['channel_x', 'channel_y', 'categories', 'category_cc'], inplace=True)
         
         # Calculate channel-level engagement features
         print("\nCalculating channel-level features...")

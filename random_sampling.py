@@ -49,7 +49,7 @@ class RandomSampler:
     def count_rows(self, source_path):
         """
         Count total rows in compressed JSONL file.
-        """
+        
         total_rows = 0
         dctx = zstd.ZstdDecompressor()
         logging.info("Counting total rows in source file")
@@ -67,6 +67,8 @@ class RandomSampler:
         print(f"Total rows in source: {total_rows:,}")
         logging.info(f"Counted total rows: {total_rows:,}")
         return total_rows
+        """
+        return 85_000_000
     
     def sample_rows(self, source_path, target_samples):
         """
@@ -168,6 +170,7 @@ class RandomSampler:
         selected, malformed_count, filtered_low_engagement = self.sample_rows(source_path, target_samples)
         
         # Create DataFrame
+        print("\nCreating DataFrame from sampled data...")
         sample_df = pd.DataFrame(selected)
         
         # Save results
@@ -198,11 +201,11 @@ class RandomSampler:
 if __name__ == "__main__":
     # Initialize sampler
     sampler = RandomSampler(
-        ratio=0.025,
+        ratio=0.001,
         max_lines=None,
         log_every=1_000_000,
         random_state=42,
-        min_views_per_day=10000  # Filter videos with < 10000 views per day
+        min_views_per_day=-1  # Filter videos with < 10000 views per day, set -1 to disable
     )
     
     # Run sampling

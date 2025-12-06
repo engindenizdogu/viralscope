@@ -53,11 +53,10 @@ class ModelTrainer:
                     n_jobs=self.n_jobs
                 ),
                 {
-                    'n_estimators': [30],
-                    'max_depth': [3],
-                    'min_samples_split': [5],
-                    'min_samples_leaf': [5],
-                    'class_weight': ['balanced']
+                    'n_estimators': [200, 300],
+                    'max_depth': [10, 20],
+                    'min_samples_leaf': [1, 3],
+                    'class_weight': ['balanced', None]
                 }
             ),
             "DecisionTree": (
@@ -65,22 +64,20 @@ class ModelTrainer:
                     random_state=self.random_state
                 ),
                 {
-                    'max_depth': [10],
-                    'min_samples_split': [10],
-                    'min_samples_leaf': [5],
-                    'criterion': ['entropy'] #['gini', 'entropy'],
-                    #'class_weight': ['balanced', None]
+                    'max_depth': [10, 20],
+                    'min_samples_leaf': [3, 5],
+                    'criterion': ['gini', 'entropy'],
+                    'class_weight': ['balanced', None]
                 }
             ),
             "LinearSVC": (
                 LinearSVC(
-                    max_iter=20000, 
                     random_state=self.random_state
                 ),
                 {
-                    'C': [1.0],
-                    'class_weight': ['balanced'],
-                    'max_iter': [10000]
+                    'C': [0.01, 0.1],
+                    'class_weight': ['balanced', None],
+                    'max_iter': [1000, 2000]
                 }
             ),
             "KNN": (
@@ -89,9 +86,9 @@ class ModelTrainer:
                     n_jobs=self.n_jobs
                 ),
                 {
-                    'n_neighbors': [3], #, 5, 7],
-                    'weights': ['uniform'], #, 'distance'],
-                    'metric': ['euclidean'] #, 'manhattan']
+                    'n_neighbors': [7, 9],
+                    #'weights': ['uniform', 'distance'],
+                    'p': [2]
                 }
             ),
             "MLP": (
@@ -101,9 +98,10 @@ class ModelTrainer:
                     random_state=self.random_state
                 ),
                 {
-                    'hidden_layer_sizes': [(128, 64)],
-                    'learning_rate_init': [0.01],
-                    'max_iter': [50]
+                    'hidden_layer_sizes': [(128, 64), (256, 128, 32)],
+                    'learning_rate_init': [0.02, 0.05],
+                    'activation': ['relu', 'logistic'],
+                    'max_iter': [100, 200]
                 }
             )
         }
@@ -189,9 +187,8 @@ class ModelTrainer:
         indices = np.argsort(importances)[::-1][:actual_top_n]
         
         plt.figure(figsize=(12, 8))
-        plt.title(f'Top {actual_top_n} Feature Importances - {model_name}', 
-                  fontsize=14, fontweight='bold')
-        plt.bar(range(len(indices)), importances[indices], color='steelblue')
+        plt.title(f'Top {actual_top_n} Features - {model_name}', fontsize=14, fontweight='bold')
+        plt.bar(range(len(indices)), importances[indices], color='mediumseagreen', edgecolor='black', align='center')
         
         # Get feature names using the indices
         feature_labels = [feature_names[i] if i < len(feature_names) else f'Feature_{i}' for i in indices]
