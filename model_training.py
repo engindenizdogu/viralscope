@@ -9,6 +9,8 @@ from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.svm import LinearSVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -102,6 +104,30 @@ class ModelTrainer:
                     'learning_rate_init': [0.02, 0.05],
                     'activation': ['relu', 'logistic'],
                     'max_iter': [100, 200]
+                }
+            ),
+            "LogisticRegression": (
+                LogisticRegression(
+                    random_state=self.random_state,
+                    max_iter=200
+                ),
+                {
+                    'C': [0.01, 0.1],
+                    'class_weight': ['balanced', None],
+                    'max_iter': [100, 200]
+                }
+            ),
+            "GradientBoosting": (
+                GradientBoostingClassifier(
+                    n_estimators=200,
+                    learning_rate=0.1,
+                    random_state=self.random_state
+                ),
+                {
+                    'n_estimators': [200, 300],
+                    'learning_rate': [0.05, 0.1],
+                    'max_depth': [3, 5],
+                    'subsample': [0.8, 1.0]
                 }
             )
         }
