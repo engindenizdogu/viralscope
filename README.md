@@ -45,6 +45,10 @@ trendy-tube/
 │   ├── data_exploration.ipynb        # EDA and initial analysis
 │   └── Archive/                      # Old preprocessing notebooks
 │
+├── Sentiment/                        # Sentiment analysis feature engineering
+│   ├── sentiment.py                  # Optimized RoBERTa-based sentiment extraction
+│   └── data_exploration_sentiment.ipynb
+│
 ├── Docs/                             # Documentation and visualizations
 │   ├── ER_Diagram.png                # Entity-relationship diagram
 │   ├── ER_Diagram_Simplified.png     # Simplified ER diagram
@@ -62,6 +66,8 @@ trendy-tube/
 ├── data_preparation.py               # Stage 2: Data preparation and engagement calculation
 ├── feature_engineering.py            # Stage 3: Feature extraction and train/test split
 ├── model_training.py                 # Stage 4: Model training and evaluation
+├── Sentiment/
+│   └── sentiment.py                  # Alternative Stage 3: Feature engineering with sentiment analysis
 ├── requirements.txt                  # Python dependencies
 └── README.md                         # This file
 ```
@@ -267,6 +273,89 @@ engagement_per_day = engagement_raw / days_since_upload
 - `save_evaluation_metrics()`: Export metrics and best params
 - `run_training_pipeline()`: Train all models, save outputs
 
+### `Sentiment/sentiment.py` - Alternative Stage 3: Feature Engineering with Sentiment Analysis
+
+**Purpose:** Enhanced version of `feature_engineering.py` that adds RoBERTa-based sentiment analysis to video titles (and optionally descriptions).
+
+**Key Features:**
+- All features from `feature_engineering.py` PLUS sentiment analysis
+- Uses pretrained `cardiffnlp/twitter-roberta-base-sentiment` model
+- Optimized for performance with large batch processing
+- GPU acceleration when available (automatic CPU fallback)
+- Graceful handling when transformers library not installed
+
+**Sentiment Features Added:**
+- `title_sentiment_neg`: Negative sentiment probability (0-1)
+- `title_sentiment_neu`: Neutral sentiment probability (0-1)  
+- `title_sentiment_pos`: Positive sentiment probability (0-1)
+- Description sentiment (commented out by default for speed)
+
+**Performance Optimizations:**
+- **Batch size**: 128 (vs 32) for better GPU utilization
+- **GPU softmax**: Computed on GPU before CPU transfer
+- **Single torch.no_grad()**: Context moved outside loop
+- **Minimal memory cleanup**: Cache cleared once at end, not per batch
+- **Title-only processing**: Descriptions skipped by default (50% faster)
+
+**Expected Performance:**
+- 24K videos: ~10-15 minutes (vs 3 hours unoptimized)
+- With descriptions: ~20-30 minutes
+- Batch size and GPU availability significantly impact speed
+
+**Requirements:**
+```bash
+pip install transformers torch
+# Optional for GPU:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
+
+**Usage:**
+```python
+from Sentiment.sentiment import FeatureEngineer
+
+engineer = FeatureEngineer(
+    test_size=0.2,
+    random_state=42,
+    success_percentile=70  # Top 30% labeled as successful
+)
+
+result = engineer.run_feature_engineering_pipeline(
+    input_path='SampleData/prepared_data.csv.gz',
+    output_dir='SampleData',
+    output_path_plot='Docs/target_distribution_sentiment.png'
+)
+```
+
+**Outputs:** Same as `feature_engineering.py` plus:
+- Sentiment features in X_train/X_test
+- `feature_distributions_sentiment.png`
+- `correlation_heatmap_sentiment.png`
+- `target_distribution_sentiment.png`
+
+**Configuration Options:**
+```python
+# Enable description sentiment (uncomment in engineer_features method)
+# description_sentiment = self.extract_sentiment(features_df['description'].tolist(), batch_size=128)
+# features_df['description_sentiment_neg'] = description_sentiment[:, 0]
+# features_df['description_sentiment_neu'] = description_sentiment[:, 1]
+# features_df['description_sentiment_pos'] = description_sentiment[:, 2]
+
+# Adjust batch size for memory constraints
+title_sentiment = self.extract_sentiment(features_df['title'].tolist(), batch_size=64)
+```
+
+**Class:** `FeatureEngineer` (identical interface to feature_engineering.py)
+- `_init_sentiment_model()`: Load RoBERTa model with error handling
+- `extract_sentiment()`: Optimized batch sentiment extraction
+- All other methods: Same as `feature_engineering.py`
+
+**Notes:**
+- Falls back gracefully if transformers not installed (skips sentiment features)
+- Compatible with existing `model_training.py` pipeline
+- Can be used as drop-in replacement for `feature_engineering.py`
+- Recommended for projects where sentiment analysis adds predictive value
+
+
 ## Installation
 
 1. **Clone the repository:**
@@ -288,6 +377,16 @@ pip install -r requirements.txt
 - `pyarrow` - Feather file format support
 - `matplotlib` - Plotting
 - `seaborn` - Statistical visualization
+
+**Optional (for sentiment analysis):**
+- `transformers` - Pretrained NLP models
+- `torch` - PyTorch deep learning framework
+- `tqdm` - Progress bars
+
+```bash
+# Install optional sentiment analysis dependencies
+pip install transformers torch tqdm
+```
 
 3. **Download data:**
    - Place raw datasets in `RawData/` folder
@@ -355,6 +454,23 @@ result = engineer.run_feature_engineering_pipeline(
 # Returns: X_train, X_test, y_train, y_test, feature_names
 ```
 
+**Stage 3 (Alternative): Feature Engineering with Sentiment Analysis**
+```python
+from Sentiment.sentiment import FeatureEngineer
+
+engineer = FeatureEngineer(
+    test_size=0.2,
+    random_state=42,
+    success_percentile=70
+)
+result = engineer.run_feature_engineering_pipeline(
+    input_path='SampleData/prepared_data.csv.gz',
+    output_dir='SampleData',
+    output_path_plot='Docs/target_distribution_sentiment.png'
+)
+# Returns: Same as above + sentiment features (title_sentiment_neg/neu/pos)
+```
+
 **Stage 4: Model Training**
 ```python
 from model_training import ModelTrainer
@@ -405,13 +521,20 @@ results = pipeline.run_full_pipeline()
 │ Note:   NO LABEL CREATION - prevents data leakage               │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ STAGE 3: Feature Engineering (feature_engineering.py)           │
-│ Input:  Prepared data (100K videos)                             │
-│ Output: X_train, X_test, y_train, y_test (scaled)               │
-│ Method: Extract features, train/test split, StandardScaler      │
-│ Note:   Split BEFORE label creation in next stage               │
-└─────────────────────────────────────────────────────────────────┘
+        ┌─────────────────────┴─────────────────────┐
+        │                                           │
+        ↓                                           ↓
+┌───────────────────────┐              ┌────────────────────────────┐
+│ STAGE 3a: Standard    │              │ STAGE 3b: With Sentiment   │
+│ (feature_engineering) │              │ (Sentiment/sentiment.py)   │
+├───────────────────────┤              ├────────────────────────────┤
+│ • Title/Description   │              │ • All Stage 3a features    │
+│ • Tags/Duration       │              │ • RoBERTa sentiment (title)│
+│ • Upload timing       │              │ • GPU-optimized (10-15min) │
+│ • Channel features    │              │ • Optional: description    │
+└───────────────────────┘              └────────────────────────────┘
+        │                                           │
+        └─────────────────────┬─────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │ STAGE 4: Model Training (model_training.py)                     │
@@ -444,6 +567,7 @@ results = pipeline.run_full_pipeline()
   - [x] One hot encoding
   - [x] Scaling
   - [x] Feature engineering/extraction/selection
+  - [x] Sentiment analysis (RoBERTa-based, optional)
 - [x] Model training
   - [x] Random Forest Model
   - [x] Gradient Boosting Model
@@ -451,6 +575,7 @@ results = pipeline.run_full_pipeline()
   - [ ] Cross-validation
   - [ ] Hyperparameter tuning
   - [x] Additional models (XGBoost, Neural Networks)
+- [ ] Compare sentiment vs non-sentiment model performance
 - [ ] Look for additional scraping solutions for more recent data (Optional)
 - [ ] Agentic Architecture
 - [ ] Frontend
