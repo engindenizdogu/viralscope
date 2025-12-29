@@ -1,4 +1,4 @@
-# trendy-tube
+# viralscope
 Predictive exploration of YouTube channel & video performance.
 
 ## Table of Contents
@@ -13,7 +13,7 @@ Predictive exploration of YouTube channel & video performance.
 
 ## Overview
 
-**trendy-tube** is a machine learning project that predicts YouTube video success using metadata and channel characteristics. The project processes 85+ million video records from the YouNiverse dataset to identify patterns that distinguish successful videos from others.
+**viralscope** is a machine learning project that predicts YouTube video success using metadata and channel characteristics. The project processes 85+ million video records from the YouNiverse dataset to identify patterns that distinguish successful videos from others.
 
 **Key Features:**
 - End-to-end ML pipeline from raw data to trained models
@@ -25,7 +25,7 @@ Predictive exploration of YouTube channel & video performance.
 ## Folder Structure
 
 ```
-trendy-tube/
+viralscope/
 │
 ├── RawData/                          # Raw datasets (not tracked in git)
 │   ├── _raw_yt_metadata.jsonl.zst    # 14.7 GB compressed video metadata (85M+ videos)
@@ -360,8 +360,8 @@ title_sentiment = self.extract_sentiment(features_df['title'].tolist(), batch_si
 
 1. **Clone the repository:**
 ```bash
-git clone https://github.com/engindenizdogu/trendy-tube.git
-cd trendy-tube
+git clone https://github.com/engindenizdogu/viralscope.git
+cd viralscope
 ```
 
 2. **Install dependencies:**
